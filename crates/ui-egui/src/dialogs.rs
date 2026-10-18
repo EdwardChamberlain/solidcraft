@@ -125,6 +125,11 @@ pub enum Kind {
         t: String,
         sketch: Option<u64>,
     },
+    /// A datum (plane, axis or point) by one of the methods in `dialogs_datum::METHODS`.
+    Datum {
+        method: usize,
+        value: String,
+    },
     /// Split a body by a plane.
     Split,
     /// Scale bodies uniformly.
@@ -411,7 +416,7 @@ impl Refused {
 }
 
 /// Can a selection go into an input that accepts `a`? (Planar-ness is checked when picking.)
-fn fits(a: Accept, s: &Sel) -> bool {
+pub(crate) fn fits(a: Accept, s: &Sel) -> bool {
     match s {
         Sel::Profile { .. } => a & PROFILES != 0,
         Sel::Edge { .. } => a & EDGES != 0,
@@ -542,6 +547,9 @@ impl Dialog {
                 Kind::AnglePlane { angle: "45 deg".into() },
                 vec![SelInput::new("Plane", PLANES, false), SelInput::new("Axis", AXES, false)],
             ),
+            c if app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced && crate::dialogs_datum::dialog(c).is_some() => {
+                crate::dialogs_datum::dialog(c)?
+            }
             "solid.split_body" => Dialog::new(
                 Kind::Split,
                 vec![SelInput::new("Body to split", BODIES, false), SelInput::new("Splitting tool", PLANES | FACES | AXES, false)],
@@ -811,6 +819,7 @@ impl Dialog {
                 | Kind::Sweep { .. }
                 | Kind::PathPlane { .. }
                 | Kind::Midplane
+                | Kind::Datum { .. }
                 | Kind::Move { .. }
                 | Kind::Hole { .. }
                 | Kind::Primitive { .. }
@@ -850,6 +859,10 @@ impl Dialog {
             Kind::Section { offset, .. } => ("Distance", ValueKind::Length, offset),
             Kind::OffsetPlane { offset } => ("Distance", ValueKind::Length, offset),
             Kind::PathPlane { t, .. } => ("Position (0 to 1)", ValueKind::Unitless, t),
+            Kind::Datum { method, value } => {
+                let (_, label, _) = crate::dialogs_datum::METHODS.get(*method)?.value?;
+                (label, ValueKind::Unitless, value)
+            }
             Kind::Rib { thickness, .. } => ("Thickness", ValueKind::Length, thickness),
             Kind::Emboss { depth, .. } => ("Depth", ValueKind::Length, depth),
             Kind::PathPattern { spacing, .. } => ("Spacing", ValueKind::Length, spacing),
@@ -1401,6 +1414,11 @@ fn title(k: &Kind) -> &'static str {
         Kind::Material { .. } => "PHYSICAL MATERIAL",
         Kind::OffsetPlane { .. } => "OFFSET PLANE",
         Kind::Midplane => "MIDPLANE",
+        Kind::Datum { method, .. } => match crate::dialogs_datum::METHODS.get(*method).map(|m| m.class) {
+            Some(crate::dialogs_datum::Class::Axis) => "DATUM AXIS",
+            Some(crate::dialogs_datum::Class::Point) => "DATUM POINT",
+            _ => "DATUM PLANE",
+        },
         Kind::PathPlane { .. } => "PLANE ALONG PATH",
         Kind::Rib { web: false, .. } => "RIB",
         Kind::Rib { web: true, .. } => "WEB",
@@ -2326,6 +2344,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     return;
                 }
                 placement_row(&mut d, ui);
+                if advanced {
+                    crate::dialogs_datum::type_row(app, &mut d, ui);
+                }
                 if matches!(&d.kind, Kind::SketchModify(k) if k.previews())
                     || matches!(d.kind, Kind::Mirror | Kind::PatternRect { .. } | Kind::PatternCirc { .. } | Kind::PathPattern { .. })
                 {
@@ -2735,6 +2756,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         enter |= field(ui, t);
                         ui.end_row();
                     }
+                    Kind::Datum { method, value } => enter |= crate::dialogs_datum::value_row(ui, *method, value),
                     Kind::Split | Kind::ReplaceFace | Kind::Remove | Kind::Midplane => {}
                     Kind::Rib { thickness, depth, flip, normal, .. } => {
                         row_label(ui, "Direction");
@@ -4033,6 +4055,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             crate::dialogs_sweep::params(app, opts, sels(d, 2).first(), [sels(d, 3), sels(d, 4)], &mut p)?;
             ("solid.sweep", p)
         }
+        Kind::Datum { .. } => crate::dialogs_datum::command(app, d)?,
         Kind::OffsetPlane { offset } => {
             need(0, "a plane")?;
             let base = plane_arg(app, sels(d, 0).first())?;

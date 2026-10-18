@@ -106,7 +106,8 @@ const ADVANCED_DATUM: &[&str] = &[
 
 const ADVANCED_PATTERN: &[&str] = &["solid.pattern.rectangular", "solid.pattern.circular", "solid.pattern.path", "solid.mirror"];
 
-const ADVANCED_COMPONENT: &[&str] = &["component.create", "component.insert_design", "component.activate", "component.update_links"];
+const ADVANCED_COMPONENT: &[&str] =
+    &["component.new_part", "component.insert_design", "component.activate", "component.update_links", "component.break_link"];
 
 const ADVANCED_JOINT: &[&str] =
     &["joint.origin", "joint.create", "joint.as_built", "joint.rigid_group", "joint.drive", "explode.create", "inspect.interference"];

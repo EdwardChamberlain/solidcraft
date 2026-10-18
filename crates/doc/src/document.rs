@@ -2307,6 +2307,30 @@ pub struct DesignLink {
     pub path: String,
     /// The Import feature holding the linked design's bodies.
     pub feature: u64,
+    /// The linked design's identity when it was last read (`Document::id`), empty when it had
+    /// none. A file at the same path with another id is a different part: Update Links says so.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub id: String,
+}
+
+/// Which modelling approach a design was made in. Designs are not converted between approaches:
+/// the approach decides how the design is laid out and which commands the window offers for it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Approach {
+    /// A part: its own feature tree, other part files added as components.
+    Advanced,
+    /// A design holding its components, history shown as a timeline. Also what an approach
+    /// this version doesn't know reads as.
+    #[default]
+    #[serde(other)]
+    Classic,
+}
+
+impl Approach {
+    pub fn is_classic(&self) -> bool {
+        *self == Approach::Classic
+    }
 }
 
 /// The document.
@@ -2324,6 +2348,13 @@ pub struct Document {
     pub name: String,
     #[serde(default = "default_units")]
     pub units: String,
+    /// The design's identity: a hex string minted when it is first saved and again for a Save As
+    /// copy. Links to the design remember it. Empty until saved.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub id: String,
+    /// The modelling approach the design was made in.
+    #[serde(default, skip_serializing_if = "Approach::is_classic")]
+    pub approach: Approach,
     /// Design properties (project, author…) and other tools' data, kept as they are (#1015).
     #[serde(default, skip_serializing_if = "crate::Metadata::is_empty")]
     pub metadata: crate::Metadata,
@@ -2541,6 +2572,8 @@ impl Document {
             format_pending: crate::format::pending_names(),
             name: name.into(),
             units: default_units(),
+            id: String::new(),
+            approach: Approach::Classic,
             metadata: Default::default(),
             params: Vec::new(),
             features: Vec::new(),

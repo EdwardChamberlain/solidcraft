@@ -5,6 +5,11 @@
 //! without the part file). The link remembers the file, relative to this design's folder once it
 //! is saved; Update Links reads the file again and replaces the Import feature's bodies, and
 //! Break Link keeps the bodies and forgets the file.
+//!
+//! A part may link parts that link parts: a linked design is brought up to date from its own
+//! links before its bodies are read, so editing a leaf reaches every design above it on the next
+//! update. A design can never link one that already links it, however far down (`reaches`).
+//! New Part (`component.new_part`) makes the part file and links it in one step.
 
 use std::path::{Component as PathPart, Path, PathBuf};
 
@@ -19,6 +24,10 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("component.insert_design", "Insert Design", insert_design).at("SOLID", "ASSEMBLE").icon("component").params(
         "path: a .solidcraft design → a new component linked to it, holding its solid bodies as placed in that design; \
          name? (default: the design's name); parent?: component id or name (default: the active one); translate?: [x,y,z]",
+    ),
+    CommandSpec::new("component.new_part", "New Part Component", new_part).at("SOLID", "ASSEMBLE").icon("component").params(
+        "name: the part's name; path?: its .solidcraft file (default: <name>.solidcraft beside this design, which must be saved first); \
+         parent?, translate?: as component.insert_design → a new empty part file, linked into a new component. Open it to model it",
     ),
     CommandSpec::new("component.update_links", "Update Links", update_links).icon("update").params(
         "component?: id or name (default: every linked component) — reads the linked designs again and replaces their bodies where they changed",
@@ -92,19 +101,67 @@ fn resolve(design: Option<&str>, link: &str) -> PathBuf {
 
 /// The links of `doc` stored for a design saved at `to` instead of at `from`.
 pub(super) fn rebased(doc: &Document, from: Option<&str>, to: &str) -> std::collections::BTreeMap<u64, DesignLink> {
-    doc.links.iter().map(|(c, l)| (*c, DesignLink { path: stored(Some(to), &resolve(from, &l.path)), feature: l.feature })).collect()
+    doc.links
+        .iter()
+        .map(|(c, l)| (*c, DesignLink { path: stored(Some(to), &resolve(from, &l.path)), feature: l.feature, id: l.id.clone() }))
+        .collect()
 }
 
-/// The solid bodies of the design at `file`, evaluated, as an Import feature.
-fn linked_bodies(file: &Path, own: Option<&str>) -> Result<(String, solidcraft_io::StepFeature)> {
+/// Reads the design at `file`.
+fn read_design_at(file: &Path) -> Result<Document> {
     let shown = file.display().to_string();
-    if own.is_some_and(|o| absolute(Path::new(o)) == absolute(file)) {
-        return Err(EngineError::Other(format!("{shown}: a design can't be linked into itself")));
-    }
     let bytes = solidcraft_io::vfs::read(&shown, solidcraft_io::MAX_DESIGN_BYTES).map_err(|e| EngineError::Other(format!("{shown}: {e}")))?;
-    let doc = solidcraft_io::read_design(&bytes).map_err(|e| EngineError::Other(format!("{shown}: {e}")))?;
-    let name = doc.name.clone();
-    let part = Session::new(doc);
+    solidcraft_io::read_design(&bytes).map_err(|e| EngineError::Other(format!("{shown}: {e}")))
+}
+
+/// How deep and how wide `reaches` looks before it gives up (and refuses).
+const REACH_DEPTH: usize = 16;
+const REACH_FILES: usize = 256;
+
+/// Does the design at `file` link `target`, directly or through the designs it links? A file
+/// that can't be read has no links to follow. Giving up (too deep or too many files) counts as
+/// reaching it: a chain that long is refused rather than followed.
+fn reaches(file: &Path, target: &Path) -> bool {
+    fn walk(file: &Path, target: &Path, depth: usize, seen: &mut std::collections::BTreeSet<PathBuf>) -> bool {
+        if depth > REACH_DEPTH || seen.len() > REACH_FILES {
+            return true;
+        }
+        let file = absolute(file);
+        if !seen.insert(file.clone()) {
+            return false;
+        }
+        let Ok(doc) = read_design_at(&file) else { return false };
+        let own = file.to_string_lossy().into_owned();
+        doc.links.values().any(|l| {
+            let linked = absolute(&resolve(Some(&own), &l.path));
+            linked == target || walk(&linked, target, depth + 1, seen)
+        })
+    }
+    walk(file, &absolute(target), 0, &mut std::collections::BTreeSet::new())
+}
+
+/// The solid bodies of the design at `file`, evaluated, as an Import feature: its name, its
+/// identity and the feature.
+fn linked_bodies(file: &Path, own: Option<&str>) -> Result<(String, String, solidcraft_io::StepFeature)> {
+    let shown = file.display().to_string();
+    if let Some(o) = own {
+        if absolute(Path::new(o)) == absolute(file) {
+            return Err(EngineError::Other(format!("{shown}: a design can't be linked into itself")));
+        }
+        if reaches(file, Path::new(o)) {
+            return Err(EngineError::Other(format!(
+                "{shown}: it already links this design (or links too many designs to follow), so it can't be linked here"
+            )));
+        }
+    }
+    let doc = read_design_at(file)?;
+    let (name, id) = (doc.name.clone(), doc.id.clone());
+    let mut part = Session::new(doc);
+    part.path = Some(shown.clone());
+    // The parts it links come up to date first. One that is missing keeps the bodies it has.
+    if !part.doc.links.is_empty() {
+        let _ = part.execute("component.update_links", &json!({}));
+    }
     if let Some(e) = part.model.results.iter().find_map(|r| r.error.clone()) {
         return Err(EngineError::Other(format!("{shown}: the design has a feature that fails ({e}); fix it before linking it")));
     }
@@ -119,7 +176,7 @@ fn linked_bodies(file: &Path, own: Option<&str>) -> Result<(String, solidcraft_i
     if world.bodies.len() > solids.len() {
         feature.warnings.push(format!("{} mesh bodies of {shown} are not linked", world.bodies.len() - solids.len()));
     }
-    Ok((name, feature))
+    Ok((name, id, feature))
 }
 
 fn component_key(s: &Session, p: &Value, key: &str, cmd: &str) -> Result<u64> {
@@ -139,7 +196,7 @@ fn insert_design(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => vec3(v).filter(|t| t.is_finite() && t.len() < 1e9).ok_or_else(|| bad(cmd, "`translate` must be [x, y, z] in mm"))?,
     };
     let file = absolute(Path::new(given));
-    let (design_name, sf) = linked_bodies(&file, s.path.as_deref())?;
+    let (design_name, design_id, sf) = linked_bodies(&file, s.path.as_deref())?;
     let name = str_(p, "name").filter(|n| !n.trim().is_empty()).map(str::to_string).unwrap_or(design_name);
     let mut create = json!({"name": name, "activate": false});
     if let Some(parent) = p.get("parent") {
@@ -157,7 +214,7 @@ fn insert_design(s: &mut Session, p: &Value) -> Result<Value> {
         o.transform[3] = [translate.x, translate.y, translate.z, 1.0];
     }
     let path = stored(s.path.as_deref(), &file);
-    s.doc_mut().links.insert(comp, DesignLink { path: path.clone(), feature: id });
+    s.doc_mut().links.insert(comp, DesignLink { path: path.clone(), feature: id, id: design_id });
     s.refresh();
     if let Some(e) = s.model.result(id).and_then(|r| r.error.clone()) {
         return Err(EngineError::Other(e));
@@ -167,6 +224,42 @@ fn insert_design(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(
         json!({"component": comp, "occurrence": occ, "name": name, "feature": id, "path": path, "bodies": bodies, "created_bodies": bodies, "warnings": sf.warnings}),
     )
+}
+
+fn new_part(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "component.new_part";
+    let name = str_(p, "name")
+        .map(str::trim)
+        .filter(|n| !n.is_empty() && n.len() < 256 && !n.contains(['/', '\\']))
+        .ok_or_else(|| bad(cmd, "`name` is required"))?;
+    let file = match str_(p, "path").filter(|x| !x.trim().is_empty() && x.len() < 4096) {
+        Some(given) => absolute(Path::new(given)),
+        None => base_dir(s.path.as_deref())
+            .map(|d| d.join(format!("{name}.solidcraft")))
+            .ok_or_else(|| bad(cmd, "save this design first (the part is made beside it), or give `path`"))?,
+    };
+    let shown = file.display().to_string();
+    if file.extension().is_none_or(|e| !e.eq_ignore_ascii_case("solidcraft")) {
+        return Err(bad(cmd, "`path` must end in .solidcraft"));
+    }
+    if solidcraft_io::vfs::read(&shown, 1).is_ok() || file.exists() {
+        return Err(bad(cmd, format!("{shown} exists already; give another name or use component.insert_design")));
+    }
+    // The new part: an empty design of the same approach, with a body so it can be linked at
+    // once (a link needs a solid; the owner replaces it by modelling in the part).
+    let mut part = Session::new(Document::new(name));
+    part.doc_mut().approach = s.doc.approach;
+    part.execute("solid.box", &json!({"length": 10, "width": 10, "height": 10, "body_name": name, "name": "Placeholder"}))?;
+    part.execute("file.save", &json!({"path": shown}))?;
+    let mut insert = json!({"path": shown, "name": name});
+    for key in ["parent", "translate"] {
+        if let Some(v) = p.get(key) {
+            insert[key] = v.clone();
+        }
+    }
+    let mut r = insert_design(s, &insert)?;
+    r["file"] = json!(shown);
+    Ok(r)
 }
 
 fn update_links(s: &mut Session, p: &Value) -> Result<Value> {
@@ -194,8 +287,16 @@ fn update_links(s: &mut Session, p: &Value) -> Result<Value> {
         };
         let old = old.clone();
         let file = resolve(s.path.as_deref(), &link.path);
-        let (_, sf) = linked_bodies(&file, s.path.as_deref()).map_err(|e| bad(cmd, format!("{cname}: {e}")))?;
+        let (_, design_id, sf) = linked_bodies(&file, s.path.as_deref()).map_err(|e| bad(cmd, format!("{cname}: {e}")))?;
         warnings.extend(sf.warnings.iter().cloned());
+        if !link.id.is_empty() && !design_id.is_empty() && link.id != design_id {
+            warnings.push(format!("{cname}: the file {} is a different design now than the one that was linked", link.path));
+        }
+        if link.id != design_id
+            && let Some(l) = s.doc_mut().links.get_mut(&comp)
+        {
+            l.id = design_id;
+        }
         if matches!(&sf.kind, FeatureKind::Import { step, .. } if *step == old) {
             unchanged.push(cname);
             continue;
@@ -256,7 +357,7 @@ mod tests {
         let unsaved = stored(None, &part);
         assert!(Path::new(&unsaved).is_absolute(), "{unsaved}");
         let mut doc = Document::default();
-        doc.links.insert(7, DesignLink { path: unsaved, feature: 3 });
+        doc.links.insert(7, DesignLink { path: unsaved, feature: 3, id: String::new() });
         let moved = rebased(&doc, None, &design);
         assert_eq!(moved.get(&7).map(|l| l.path.as_str()), Some("../parts/plate.solidcraft"));
         let beside = root.join("parts").join("asm.solidcraft").to_string_lossy().into_owned();
@@ -316,6 +417,123 @@ mod tests {
         assert_eq!(run(&mut b, "component.links", json!({}))["links"], json!([]));
         assert!((volume(&mut b) - 9000.0).abs() < 1e-6);
         assert!(b.execute("component.update_links", &json!({"component": "plate"})).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("solidcraft-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_design_gets_an_identity_when_saved_and_keeps_it_through_undo_and_save_as() {
+        let dir = temp_dir("identity");
+        let (one, two) = (dir.join("one.solidcraft"), dir.join("two.solidcraft"));
+        let mut s = Session::default();
+        assert!(s.doc.id.is_empty());
+        run(&mut s, "solid.box", json!({"length": 5, "width": 5, "height": 5}));
+        run(&mut s, "file.save", json!({"path": one}));
+        let id = s.doc.id.clone();
+        assert_eq!(id.len(), 32);
+        run(&mut s, "solid.box", json!({"length": 1, "width": 1, "height": 1, "body_name": "Other"}));
+        run(&mut s, "edit.undo", json!({}));
+        assert_eq!(s.doc.id, id, "undo keeps the identity");
+        run(&mut s, "file.save", json!({"path": one}));
+        assert_eq!(s.doc.id, id, "saving again keeps it");
+        run(&mut s, "file.save_as", json!({"path": two}));
+        assert_eq!(s.doc.id, id, "Save As keeps the design's identity");
+        let mut reopened = Session::default();
+        run(&mut reopened, "doc.open", json!({"path": one}));
+        assert_eq!(reopened.doc.id, id);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_design_cannot_link_one_that_links_it_however_far_down() {
+        let dir = temp_dir("cycle");
+        let (a, b, c) = (dir.join("a.solidcraft"), dir.join("b.solidcraft"), dir.join("c.solidcraft"));
+        save_box(&c, 10.0);
+        // b links c; a links b.
+        let mut sb = Session::default();
+        run(&mut sb, "component.insert_design", json!({"path": c}));
+        run(&mut sb, "file.save", json!({"path": b}));
+        let mut sa = Session::default();
+        run(&mut sa, "component.insert_design", json!({"path": b}));
+        run(&mut sa, "file.save", json!({"path": a}));
+        // c can't take a (a reaches c through b), and b can't take a either.
+        let mut sc = Session::default();
+        run(&mut sc, "file.save", json!({"path": c}));
+        let err = sc.execute("component.insert_design", &json!({"path": a})).unwrap_err().to_string();
+        assert!(err.contains("already links"), "{err}");
+        let mut sb2 = Session::default();
+        run(&mut sb2, "doc.open", json!({"path": b}));
+        assert!(sb2.execute("component.insert_design", &json!({"path": a})).is_err());
+        assert!(sb2.doc.links.len() == 1 && sb2.doc.components.len() == 1, "nothing changed");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn editing_a_leaf_part_reaches_the_assembly_two_levels_up() {
+        let dir = temp_dir("nested");
+        let (leaf, mid, top) = (dir.join("leaf.solidcraft"), dir.join("mid.solidcraft"), dir.join("top.solidcraft"));
+        save_box(&leaf, 30.0);
+        let mut m = Session::default();
+        run(&mut m, "component.insert_design", json!({"path": leaf}));
+        run(&mut m, "file.save", json!({"path": mid}));
+        let mut t = Session::default();
+        run(&mut t, "component.insert_design", json!({"path": mid}));
+        run(&mut t, "file.save", json!({"path": top}));
+        assert!((volume(&mut t) - 6000.0).abs() < 1e-6);
+        // The leaf changes; the middle part is not opened or saved, yet the top follows.
+        save_box(&leaf, 45.0);
+        assert_eq!(run(&mut t, "component.update_links", json!({}))["updated"], json!(["mid"]));
+        assert!((volume(&mut t) - 9000.0).abs() < 1e-6, "{}", volume(&mut t));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_new_part_is_a_file_of_its_own_linked_in_and_reusable() {
+        let dir = temp_dir("new-part");
+        let case = dir.join("case.solidcraft");
+        let mut s = Session::default();
+        s.doc_mut().approach = solidcraft_doc::Approach::Advanced;
+        // Unsaved: nowhere to put the part.
+        assert!(s.execute("component.new_part", &json!({"name": "Lid"})).is_err());
+        run(&mut s, "file.save", json!({"path": case}));
+        let made = run(&mut s, "component.new_part", json!({"name": "Lid"}));
+        assert!(dir.join("Lid.solidcraft").is_file(), "{made}");
+        assert_eq!(s.doc.links.len(), 1);
+        assert_eq!(run(&mut s, "component.links", json!({}))["links"][0]["path"], "Lid.solidcraft");
+        // It opens on its own as an Advanced part with an identity, and can be used again.
+        let mut part = Session::default();
+        run(&mut part, "doc.open", json!({"path": dir.join("Lid.solidcraft")}));
+        assert_eq!(part.doc.approach, solidcraft_doc::Approach::Advanced);
+        assert_eq!(part.doc.id.len(), 32);
+        assert_eq!(s.doc.links.values().next().map(|l| l.id.clone()), Some(part.doc.id.clone()));
+        run(&mut s, "component.insert_design", json!({"path": dir.join("Lid.solidcraft"), "name": "Lid 2", "translate": [50, 0, 0]}));
+        assert_eq!(s.doc.links.len(), 2);
+        // Names that would escape the folder, and existing files, are refused.
+        assert!(s.execute("component.new_part", &json!({"name": "../Out"})).is_err());
+        assert!(s.execute("component.new_part", &json!({"name": "Lid"})).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_file_replaced_by_another_design_is_reported_on_update() {
+        let dir = temp_dir("replaced");
+        let (part, case) = (dir.join("p.solidcraft"), dir.join("case.solidcraft"));
+        save_box(&part, 30.0);
+        let mut s = Session::default();
+        run(&mut s, "component.insert_design", json!({"path": part}));
+        run(&mut s, "file.save", json!({"path": case}));
+        // Another design is saved over the part's file (new design, new identity).
+        std::fs::remove_file(&part).unwrap();
+        save_box(&part, 40.0);
+        let r = run(&mut s, "component.update_links", json!({}));
+        let warnings = r["warnings"].to_string();
+        assert!(warnings.contains("different design"), "{warnings}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

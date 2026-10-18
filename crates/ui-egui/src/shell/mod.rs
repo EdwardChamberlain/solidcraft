@@ -5,6 +5,7 @@
 //! parts every layout needs, then hands the panels to [`show`].
 
 pub mod advanced;
+pub mod assembly_nav;
 pub mod classic;
 pub mod part_nav;
 

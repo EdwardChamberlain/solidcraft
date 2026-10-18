@@ -249,6 +249,21 @@ impl ModellingApproach {
         }
     }
 
+    /// The approach a design made now records.
+    pub fn document_approach(self) -> solidcraft_engine::doc::Approach {
+        match self {
+            Self::Classic => solidcraft_engine::doc::Approach::Classic,
+            Self::Advanced => solidcraft_engine::doc::Approach::Advanced,
+        }
+    }
+
+    pub fn of_document(a: solidcraft_engine::doc::Approach) -> Self {
+        match a {
+            solidcraft_engine::doc::Approach::Advanced => Self::Advanced,
+            solidcraft_engine::doc::Approach::Classic => Self::Classic,
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Classic => "Classic (Fusion 360)",
@@ -858,6 +873,15 @@ pub fn apply(app: &mut SolveApp, ctx: &egui::Context) {
 /// Callers: a launch with no file, New on a design that is already empty, `file.new`, and the
 /// blank design left when the last tab closes. A design that already has features is unchanged.
 pub fn apply_new_design(app: &mut SolveApp) {
+    // A new design is made in the approach chosen now, and records it.
+    let approach = app.preferences.modelling_approach.document_approach();
+    if app.session.doc.features.is_empty() && app.session.doc.approach != approach {
+        let saved = !app.session.is_dirty();
+        app.session.doc_mut().approach = approach;
+        if saved {
+            app.session.mark_saved();
+        }
+    }
     if app.session.doc.features.is_empty() && app.session.doc.units != app.preferences.default_units {
         let saved = !app.session.is_dirty();
         if app.session.execute("document.units", &json!({ "units": app.preferences.default_units })).is_ok() {

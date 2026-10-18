@@ -677,6 +677,9 @@ impl SolveApp {
                     // `file.new` starts from millimetres. Units of new designs still apply (#1205).
                     prefs::apply_new_design(self);
                 }
+                if matches!(id, "doc.open" | "doc.recover") {
+                    self.adopt_document_approach();
+                }
                 if matches!(id, "file.new" | "doc.open" | "doc.recover") {
                     render_workspace::reset_document(self);
                     self.sketch_choices = sketch_families::Choices::default();
@@ -1003,6 +1006,28 @@ impl SolveApp {
 
     pub fn set_status(&mut self, s: impl Into<String>, error: bool) {
         self.status = Some((s.into(), now_ms(), error));
+    }
+
+    /// A design made in the other modelling approach switches the window to that approach: files
+    /// are not converted between approaches, so the design is shown the way it was made. An
+    /// Advanced design's linked parts are read again, so it opens up to date with them.
+    fn adopt_document_approach(&mut self) {
+        let wanted = prefs::ModellingApproach::of_document(self.session.doc.approach);
+        if wanted != self.preferences.modelling_approach {
+            self.preferences.modelling_approach = wanted;
+            self.set_status(self.tr_label("Switched to this design's modelling approach").to_string(), false);
+        }
+        if wanted == prefs::ModellingApproach::Advanced && !self.session.doc.links.is_empty() {
+            match self.session.execute("component.update_links", &json!({})) {
+                Ok(v) => {
+                    let updated = v.get("updated").and_then(Value::as_array).map_or(0, Vec::len);
+                    if updated > 0 {
+                        self.set_status(i18n::format("ui.parts_updated", &[("count", &updated.to_string())]), false);
+                    }
+                }
+                Err(e) => self.set_status(e.to_string(), true),
+            }
+        }
     }
 
     pub fn open_path(&mut self, path: &str) {

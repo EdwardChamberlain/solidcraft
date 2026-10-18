@@ -291,6 +291,29 @@ fn saved_name(name: &str, old_path: Option<&str>, path: &str) -> Option<String> 
     (name.trim() == old && new != old).then_some(new)
 }
 
+/// A new design identity: 128 random bits as hex. (Where the platform has no randomness, as in
+/// the browser build, the process still gives each call its own value.)
+fn mint_identity() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let word = |salt: u64| {
+        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+        h.write_u64(n);
+        h.write_u64(salt);
+        h.finish()
+    };
+    format!("{:016x}{:016x}", word(1), word(2))
+}
+
+fn set_identity(s: &mut Session, id: String) {
+    s.doc_mut().id = id.clone();
+    for snap in s.undo.iter_mut().chain(s.redo.iter_mut()) {
+        std::sync::Arc::make_mut(&mut snap.doc).id = id.clone();
+    }
+}
+
 /// Rename the design, and the undo and redo states that still carry the old name, so undo
 /// does not bring the default name back and leave the design looking changed.
 fn rename_design(s: &mut Session, from: &str, to: &str) {
@@ -306,6 +329,12 @@ fn write(s: &mut Session, path: &str, format: &str, compression: &str, preview: 
     solidcraft_io::vfs::check(path).map_err(|e| EngineError::Other(e.to_string()))?;
     // Saving an unnamed design, or one named after the file it was saved as, names it after its
     // file (not an undoable edit).
+    // A design gets its identity when first saved, and keeps it after (Save As included: the
+    // file is the design's copy, and its links still find it). Set in the undo states too, so
+    // undo keeps it.
+    if s.doc.id.is_empty() {
+        set_identity(s, mint_identity());
+    }
     let renamed = saved_name(&s.doc.name, s.path.as_deref(), path).map(|stem| (s.doc.name.clone(), stem));
     if let Some((from, to)) = &renamed {
         rename_design(s, from, to);

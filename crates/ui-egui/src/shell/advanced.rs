@@ -11,7 +11,7 @@
 use egui::RichText;
 
 use crate::theme::Tokens;
-use crate::{SolveApp, agent_chat, browser, palette, preview, render_workspace, toolbar, viewport};
+use crate::{SolveApp, agent_chat, palette, preview, render_workspace, toolbar, viewport};
 
 /// Which navigator the left pane shows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -44,7 +44,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     if app.ui.show_browser {
         match pane(ui.ctx()) {
             Pane::Part => super::part_nav::show(app, ui),
-            Pane::Assembly => browser::browser(app, ui),
+            Pane::Assembly => super::assembly_nav::show(app, ui),
         }
     }
     if render_workspace::active(app) {

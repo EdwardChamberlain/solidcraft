@@ -114,3 +114,47 @@ fn the_part_navigator_reports_a_features_parents_children_and_values() {
     h.frames(2);
     assert!(rect_of("part_nav:edit").is_none());
 }
+
+#[test]
+fn the_assembly_navigator_lists_linked_parts_with_their_state_and_opens_them() {
+    use crate::shell::advanced::{Pane, set_pane};
+    use crate::shell::assembly_nav::rows;
+    let dir = std::env::temp_dir().join(format!("solidcraft-asm-nav-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = advanced();
+    h.app.run("file.save", json!({"path": dir.join("case.solidcraft")})).unwrap();
+    h.app.run("component.new_part", json!({"name": "Lid"})).unwrap();
+    h.app.run("component.new_part", json!({"name": "Base"})).unwrap();
+    let list = rows(&h.app);
+    assert_eq!(list.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["Lid", "Base"]);
+    assert!(list.iter().all(|r| r.found && r.count == 1 && r.path.as_deref().is_some_and(|p| p.ends_with(".solidcraft"))), "{list:?}");
+    set_pane(&h.ctx, Pane::Assembly);
+    h.frames(3);
+    assert!(rect_of("assembly_nav:row:Lid").is_some() && rect_of("assembly_nav:update").is_some());
+    // A part file that has gone shows as missing.
+    std::fs::remove_file(dir.join("Base.solidcraft")).unwrap();
+    let list = rows(&h.app);
+    assert!(list[0].found && !list[1].found, "{list:?}");
+    h.frames(2);
+    assert!(rect_of("assembly_nav:open:Lid").is_some() && rect_of("assembly_nav:open:Base").is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_new_design_records_its_approach_and_opening_one_switches_to_it() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-adopt-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("part.solidcraft");
+    let mut h = advanced();
+    h.app.run("file.new", json!({})).unwrap();
+    assert_eq!(h.app.session.doc.approach, solidcraft_engine::doc::Approach::Advanced);
+    h.app.run("file.save", json!({"path": file})).unwrap();
+    h.app.preferences.modelling_approach = ModellingApproach::Classic;
+    h.app.run("file.new", json!({})).unwrap();
+    assert_eq!(h.app.session.doc.approach, solidcraft_engine::doc::Approach::Classic);
+    h.app.run("doc.open", json!({"path": file})).unwrap();
+    assert_eq!(h.app.preferences.modelling_approach, ModellingApproach::Advanced, "opening an Advanced design switches the window to it");
+    let _ = std::fs::remove_dir_all(&dir);
+}

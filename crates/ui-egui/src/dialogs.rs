@@ -247,6 +247,10 @@ pub enum Kind {
         operation: usize,
         keep_tools: bool,
     },
+    /// A part file made and linked in as a component (`component.new_part`).
+    NewPart {
+        name: String,
+    },
     Params {
         new_name: String,
         new_expr: String,
@@ -644,6 +648,7 @@ impl Dialog {
                 Kind::Combine { operation: 1, keep_tools: false },
                 vec![SelInput::new("Target Body", BODIES, false), SelInput::new("Tool Bodies", BODIES, true)],
             ),
+            "component.new_part" => Dialog::new(Kind::NewPart { name: "Part".into() }, vec![]),
             "parameters.change" => Dialog::new(Kind::Params { new_name: String::new(), new_expr: String::new() }, vec![]),
             _ => {
                 let (kind, inputs) = crate::dialogs_assembly::start(app, id)
@@ -1453,6 +1458,7 @@ fn title(k: &Kind) -> &'static str {
         },
         Kind::Combine { .. } => "COMBINE",
         Kind::Params { .. } => "PARAMETERS",
+        Kind::NewPart { .. } => "NEW PART COMPONENT",
         Kind::EditParam { .. } => "EDIT DIMENSION",
         Kind::Rename { .. } => "RENAME",
         Kind::ConfirmDelete { .. } => "DELETE FEATURE",
@@ -2759,6 +2765,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         ui.end_row();
                     }
                     Kind::Datum { method, value } => enter |= crate::dialogs_datum::value_row(ui, *method, value),
+                    Kind::NewPart { name } => {
+                        row_label(ui, "Part name");
+                        enter |= field(ui, name);
+                        ui.end_row();
+                    }
                     Kind::Split | Kind::ReplaceFace | Kind::Remove | Kind::Midplane => {}
                     Kind::Rib { thickness, depth, flip, normal, .. } => {
                         row_label(ui, "Direction");
@@ -4066,6 +4077,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             ("solid.sweep", p)
         }
         Kind::Datum { .. } => crate::dialogs_datum::command(app, d)?,
+        Kind::NewPart { name } => ("component.new_part", json!({"name": name.trim()})),
         Kind::OffsetPlane { offset } => {
             need(0, "a plane")?;
             let base = plane_arg(app, sels(d, 0).first())?;

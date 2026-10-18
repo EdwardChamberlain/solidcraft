@@ -136,6 +136,7 @@ mod revolve_manipulator_tests;
 pub mod scenario;
 pub mod select_other;
 pub mod selection;
+pub mod shell;
 #[cfg(test)]
 mod shell_face_sketch_ui_tests;
 pub mod shortcut_box;
@@ -1378,34 +1379,7 @@ impl SolveApp {
                 return;
             }
         }
-        toolbar::toolbar(self, ui);
-        let show_timeline = self.ui.show_timeline && !render_workspace::active(self);
-        let left_timeline = show_timeline && self.preferences.timeline_left;
-        if show_timeline && !left_timeline {
-            timeline::timeline(self, ui);
-        }
-        palette::palette_bar(self, ui);
-        if self.ui.show_browser {
-            if left_timeline {
-                browser::browser_below_timeline(self, ui);
-            } else {
-                browser::browser(self, ui);
-            }
-        } else if left_timeline {
-            timeline_left::left_panel(self, ui);
-        }
-        if render_workspace::active(self) {
-            render_workspace::panel(self, ui);
-        }
-        agent_chat::show(self, ui);
-        preview::update(self, ui.ctx());
-        egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
-            if render_workspace::active(self) {
-                render_workspace::show(self, ui);
-            } else {
-                viewport::show(self, ui);
-            }
-        });
+        shell::show(self, ui);
         dialogs::show(self, ui.ctx());
         issue_report::CadInput::block(self, ui, report_input);
         sketch_palette::show(self, ui.ctx());

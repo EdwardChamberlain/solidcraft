@@ -217,6 +217,39 @@ pub const MSAA: [u32; 4] = [1, 2, 4, 8];
 /// Supersampling factors (#1288): off, 1.5× and 2× the viewport's pixels each way.
 pub const SUPERSAMPLING: [f32; 3] = [1.0, 1.5, 2.0];
 
+/// How a design is modelled and how the window is laid out for it. A design records the approach
+/// it was made in; files are not converted between approaches.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModellingApproach {
+    /// A feature tree with navigators, docked step-by-step dialogs and parts that reference parts.
+    Advanced,
+    /// The original layout: ribbon, parts browser, feature history and floating dialogs.
+    /// Also what an approach this version doesn't know reads as.
+    #[default]
+    #[serde(other)]
+    Classic,
+}
+
+impl ModellingApproach {
+    pub const ALL: [Self; 2] = [Self::Classic, Self::Advanced];
+
+    /// The id the control channel and saved preferences use.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Classic => "classic",
+            Self::Advanced => "advanced",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Classic => "Classic (Fusion 360)",
+            Self::Advanced => "Advanced (NX)",
+        }
+    }
+}
+
 /// Original view navigators, independent of the mouse navigation preset.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -256,6 +289,8 @@ pub enum OrbitAround {
 pub struct Prefs {
     /// Units of new designs.
     pub default_units: String,
+    /// Classic or Advanced: the window layout and workflow (Preferences › General).
+    pub modelling_approach: ModellingApproach,
     /// Mouse mapping: `fusion`, `solidworks` or `inventor`.
     pub nav: String,
     /// View orientation widget: original signed axes (default) or compact cube.
@@ -437,6 +472,7 @@ impl Default for Prefs {
             language: "en".into(),
             ui_scale: 1.0,
             ui_font: String::new(),
+            modelling_approach: ModellingApproach::Classic,
             timeline_left: false,
             timeline_left_height: 360.0,
             timeline_left_browser_collapsed: false,
@@ -692,6 +728,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
             p.language = d.language;
             p.ui_scale = d.ui_scale;
             p.ui_font = d.ui_font;
+            p.modelling_approach = d.modelling_approach;
             p.timeline_left = d.timeline_left;
             p.timeline_left_height = d.timeline_left_height;
             p.timeline_left_browser_collapsed = d.timeline_left_browser_collapsed;
@@ -1181,6 +1218,16 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 ui_font_row(app, ui);
                 ui.end_row();
             }
+            ui.label(app.tr("ui.modelling_approach"));
+            egui::ComboBox::from_id_salt("pref_modelling_approach")
+                .selected_text(crate::i18n::tr_label(app.preferences.modelling_approach.label()))
+                .show_ui(ui, |ui| {
+                    for approach in ModellingApproach::ALL {
+                        ui.selectable_value(&mut app.preferences.modelling_approach, approach, crate::i18n::tr_label(approach.label()));
+                    }
+                });
+            ui.end_row();
+            note(ui, app.tr("ui.modelling_approach_note"));
             ui.label(app.tr("ui.feature_history"));
             let timeline_bottom = app.tr("ui.timeline_bottom").to_string();
             let timeline_left = app.tr("ui.timeline_left_sidebar").to_string();
@@ -1691,6 +1738,11 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
             o.insert(k.clone(), v.clone());
         }
     }
+    if let Some(v) = p.get("modelling_approach")
+        && !ModellingApproach::ALL.iter().any(|a| v.as_str() == Some(a.id()))
+    {
+        return Err("`modelling_approach` must be classic or advanced".into());
+    }
     // Saved preferences read an unknown mode as Off; asked for here, it is an error.
     if let Some(v) = p.get("color_vision")
         && v.as_str().and_then(crate::theme::ColorVision::from_id).is_none()
@@ -1976,6 +2028,21 @@ mod tests {
             assert_eq!(app.preferences.msaa, requested);
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn modelling_approach_defaults_to_classic_round_trips_and_rejects_unknown_ids() {
+        let old: Prefs = serde_json::from_value(json!({"nav":"solidworks"})).unwrap();
+        assert_eq!(old.modelling_approach, ModellingApproach::Classic);
+        let odd: Prefs = serde_json::from_value(json!({"modelling_approach":"from_the_future"})).unwrap();
+        assert_eq!(odd.modelling_approach, ModellingApproach::Classic);
+        let mut app = crate::SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        set(&mut app, &json!({"modelling_approach":"advanced"})).unwrap();
+        assert_eq!(app.preferences.modelling_approach, ModellingApproach::Advanced);
+        assert!(set(&mut app, &json!({"modelling_approach":"nx"})).is_err());
+        assert_eq!(app.preferences.modelling_approach, ModellingApproach::Advanced);
+        defaults(&mut app, 0);
+        assert_eq!(app.preferences.modelling_approach, ModellingApproach::Classic);
     }
 
     #[test]

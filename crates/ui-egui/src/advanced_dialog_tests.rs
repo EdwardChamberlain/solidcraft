@@ -90,3 +90,30 @@ fn a_datum_dialog_runs_its_command_with_references_built_from_the_picks() {
     d.inputs[1].items.clear();
     assert!(crate::dialogs_datum::command(&h.app, &d).unwrap_err().contains("second point"));
 }
+
+#[test]
+fn a_planar_face_is_a_direction_in_advanced_and_not_in_classic() {
+    use solidcraft_engine::Sel;
+    use solidcraft_engine::geom::Vec3;
+    let mut h = Harness::new();
+    extruded(&mut h);
+    h.app.start("solid.pattern.rectangular");
+    h.frames(2);
+    let classic_accepts = h.app.dialog.as_ref().unwrap().inputs[1].accept;
+    assert_eq!(classic_accepts & crate::selection::PLANAR_FACES, 0);
+
+    h.app.dialog = None;
+    h.app.preferences.modelling_approach = ModellingApproach::Advanced;
+    h.app.start("solid.pattern.rectangular");
+    h.frames(2);
+    let mut d = h.app.dialog.take().unwrap();
+    assert_ne!(d.inputs[1].accept & crate::selection::PLANAR_FACES, 0);
+    let top = (0..40)
+        .find_map(|i| crate::dialogs::planar_face(&h.app.session, "Main", i).filter(|(_, n)| n.z > 0.9).map(|_| i))
+        .expect("a face looking up");
+    d.inputs[0].items = vec![Sel::Body { name: "Main".into() }];
+    d.inputs[1].items = vec![Sel::Face { body: "Main".into(), index: top, point: Vec3::new(5.0, 5.0, 10.0) }];
+    let (cmd, p) = crate::dialogs::apply_commands(&h.app, &d).unwrap().remove(0);
+    assert_eq!(cmd, "solid.pattern.rectangular");
+    assert!((p["dir1"][2].as_f64().unwrap() - 1.0).abs() < 1e-9, "{p}");
+}

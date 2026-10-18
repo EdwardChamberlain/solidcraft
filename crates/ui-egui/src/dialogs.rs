@@ -568,14 +568,16 @@ impl Dialog {
                 Kind::Measure { result: None, of: Vec::new(), show: None },
                 vec![SelInput::new("Items", FACES | EDGES | selection::VERTICES | selection::CURVES | PROFILES, true)],
             ),
-            "solid.pattern.rectangular" => Dialog::new(
-                Kind::PatternRect { count: "3".into(), spacing: "20 mm".into(), count2: "1".into(), spacing2: "20 mm".into() },
-                vec![
-                    SelInput::new("Objects", BODIES, true),
-                    SelInput::new("Direction", AXES | EDGES, false),
-                    SelInput::new("Direction 2", AXES | EDGES, false),
-                ],
-            ),
+            "solid.pattern.rectangular" => {
+                Dialog::new(Kind::PatternRect { count: "3".into(), spacing: "20 mm".into(), count2: "1".into(), spacing2: "20 mm".into() }, {
+                    let vector = crate::dialogs_specify::accept(app);
+                    vec![
+                        SelInput::new("Objects", BODIES, true),
+                        SelInput::new("Direction", vector, false),
+                        SelInput::new("Direction 2", vector, false),
+                    ]
+                })
+            }
             "solid.pattern.circular" => Dialog::new(
                 Kind::PatternCirc { count: "6".into(), angle: "360 deg".into() },
                 vec![SelInput::new("Objects", BODIES, true), SelInput::new("Axis", AXES, false)],
@@ -1615,7 +1617,7 @@ fn object_type_row(d: &mut Dialog, ui: &mut egui::Ui) {
 
 /// Rows above the selection inputs: the pattern type and object type, the Hole placement (one
 /// face point, or sketch points).
-fn placement_row(d: &mut Dialog, ui: &mut egui::Ui) {
+fn placement_row(d: &mut Dialog, ui: &mut egui::Ui, vector: Accept) {
     if matches!(d.kind, Kind::Mirror) {
         object_type_row(d, ui);
         return;
@@ -1643,8 +1645,8 @@ fn placement_row(d: &mut Dialog, ui: &mut egui::Ui) {
                     Kind::PatternRect { count: "3".into(), spacing: "20 mm".into(), count2: "1".into(), spacing2: "20 mm".into() },
                     vec![
                         SelInput::new("Objects", BODIES, true),
-                        SelInput::new("Direction", AXES | EDGES, false),
-                        SelInput::new("Direction 2", AXES | EDGES, false),
+                        SelInput::new("Direction", vector, false),
+                        SelInput::new("Direction 2", vector, false),
                     ],
                 ),
                 1 => (
@@ -1811,7 +1813,7 @@ fn rectangular_pattern_rows(d: &mut Dialog, ui: &mut egui::Ui, session: &Session
         ui.label(tr("dialog.selection_guidance"));
         egui::Grid::new("pattern_source").spacing(vec2(10.0, 8.0)).show(ui, |ui| {
             if matches!(d.kind, Kind::PatternRect { .. }) {
-                placement_row(d, ui);
+                placement_row(d, ui, AXES | EDGES);
             }
             input_rows_range(d, ui, session, 0..1);
         });
@@ -2343,7 +2345,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 if matches!(&d.kind, Kind::Motion(crate::dialogs_motion::Mo::Configurations { .. })) {
                     return;
                 }
-                placement_row(&mut d, ui);
+                placement_row(&mut d, ui, crate::dialogs_specify::accept(app));
                 if advanced {
                     crate::dialogs_datum::type_row(app, &mut d, ui);
                 }
@@ -3994,7 +3996,11 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             need(0, "objects")?;
             let kept = d.extra.get("dir1").and_then(|v| serde_json::from_value::<[f64; 3]>(v.clone()).ok()).map(|a| Vec3::new(a[0], a[1], a[2]));
             let d1 = match (sels(d, 1).first(), kept) {
-                (Some(x), _) => axis_of(app, x).ok_or("the direction must be an axis, a sketch line or a straight edge")?.1,
+                (Some(x), _) => {
+                    crate::dialogs_specify::vector_of(app, x)
+                        .ok_or("the direction must be an axis, a sketch line, a straight edge or a planar face")?
+                        .1
+                }
                 (None, Some(k)) => k,
                 (None, None) => return Err("select a direction (an axis, a sketch line or a straight edge) first".into()),
             };
@@ -4002,7 +4008,11 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             pattern_objects(s, sels(d, 0), &mut p);
             let kept2 = d.extra.get("dir2").and_then(|v| serde_json::from_value::<[f64; 3]>(v.clone()).ok()).map(|a| Vec3::new(a[0], a[1], a[2]));
             let d2 = match sels(d, 2).first() {
-                Some(x) => Some(axis_of(app, x).ok_or("the second direction must be an axis, a sketch line or a straight edge")?.1),
+                Some(x) => Some(
+                    crate::dialogs_specify::vector_of(app, x)
+                        .ok_or("the second direction must be an axis, a sketch line, a straight edge or a planar face")?
+                        .1,
+                ),
                 None => kept2,
             };
             if let Some(d2) = d2 {

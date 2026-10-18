@@ -95,7 +95,7 @@ use NavButton::{Left, Middle, Right};
 use NavMode::{Orbit, Pan, Zoom};
 
 /// The mouse mappings. The first is the default.
-pub const NAV_PRESETS: [NavPreset; 8] = [
+pub const NAV_PRESETS: [NavPreset; 9] = [
     NavPreset {
         id: "fusion",
         label: "Fusion",
@@ -114,6 +114,13 @@ pub const NAV_PRESETS: [NavPreset; 8] = [
             bind(Middle, NavKeys::NONE, Orbit),
             bind(Right, NavKeys::NONE, Orbit),
         ],
+    },
+    NavPreset {
+        id: "nx",
+        label: "NX",
+        help: "Middle drag orbits, Shift+middle pans, Ctrl+middle zooms; right button opens the radial menu",
+        reverse_zoom: false,
+        bindings: &[bind(Middle, NavKeys::SHIFT, Pan), bind(Middle, NavKeys::CTRL, Zoom), bind(Middle, NavKeys::NONE, Orbit)],
     },
     NavPreset {
         id: "inventor",
@@ -1219,6 +1226,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 ui.end_row();
             }
             ui.label(app.tr("ui.modelling_approach"));
+            let approach_before = app.preferences.modelling_approach;
             egui::ComboBox::from_id_salt("pref_modelling_approach")
                 .selected_text(crate::i18n::tr_label(app.preferences.modelling_approach.label()))
                 .show_ui(ui, |ui| {
@@ -1227,6 +1235,14 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                     }
                 });
             ui.end_row();
+            // Each approach brings its own mouse mapping while the default one is still chosen.
+            if app.preferences.modelling_approach != approach_before {
+                match (app.preferences.modelling_approach, app.preferences.nav.as_str()) {
+                    (ModellingApproach::Advanced, "fusion") => app.preferences.nav = "nx".into(),
+                    (ModellingApproach::Classic, "nx") => app.preferences.nav = "fusion".into(),
+                    _ => {}
+                }
+            }
             note(ui, app.tr("ui.modelling_approach_note"));
             ui.label(app.tr("ui.feature_history"));
             let timeline_bottom = app.tr("ui.timeline_bottom").to_string();

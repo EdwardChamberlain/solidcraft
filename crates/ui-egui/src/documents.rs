@@ -336,6 +336,56 @@ pub fn tabs_info(app: &SolveApp) -> Vec<(String, bool)> {
         .collect()
 }
 
+/// What Save All did.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SavedAll {
+    /// Designs written.
+    pub saved: usize,
+    /// Designs with changes and no file yet (Save As names them), by name.
+    pub untitled: Vec<String>,
+    /// Designs that could not be written, with why.
+    pub failed: Vec<String>,
+    /// Linked parts brought up to date in designs that link the ones just saved.
+    pub updated: usize,
+}
+
+/// Save every open design that has unsaved changes and a file, then bring the linked parts of
+/// the designs that have links up to date, so an assembly picks up a part saved from another tab.
+pub fn save_all(app: &mut SolveApp) -> SavedAll {
+    let mut out = SavedAll::default();
+    let mut write = |session: &mut Session| {
+        if !session.is_dirty() {
+            return;
+        }
+        if session.path.is_none() {
+            out.untitled.push(session.doc.name.clone());
+        } else {
+            match session.execute("file.save", &json!({})) {
+                Ok(_) => out.saved += 1,
+                Err(e) => out.failed.push(format!("{}: {e}", session.doc.name)),
+            }
+        }
+    };
+    write(&mut app.session);
+    for slot in app.docs.slots.iter_mut().flatten() {
+        write(&mut slot.session);
+    }
+    let mut refresh = |session: &mut Session| {
+        if !session.doc.links.is_empty()
+            && let Ok(v) = session.execute("component.update_links", &json!({}))
+        {
+            out.updated += v.get("updated").and_then(Value::as_array).map_or(0, Vec::len);
+        }
+    };
+    if out.saved > 0 {
+        refresh(&mut app.session);
+        for slot in app.docs.slots.iter_mut().flatten() {
+            refresh(&mut slot.session);
+        }
+    }
+    out
+}
+
 /// The control channel's `ui.documents`: list, `new`, `switch`, `close` (by index; `force`
 /// closes without asking) or `quit`; `answer`: save | dont_save | cancel answers "save changes?".
 pub fn control(app: &mut SolveApp, p: &Value) -> Value {
@@ -345,6 +395,10 @@ pub fn control(app: &mut SolveApp, p: &Value) -> Value {
         Some("switch") => switch(app, i.unwrap_or(app.docs.active)),
         Some("close") => close(app, i.unwrap_or(app.docs.active), p.get("force").and_then(Value::as_bool).unwrap_or(false)),
         Some("quit") => request_quit(app),
+        Some("save_all") => {
+            let r = save_all(app);
+            return json!({"saved": r.saved, "untitled": r.untitled, "failed": r.failed, "updated": r.updated});
+        }
         _ => {}
     }
     let answer = match p.get("answer").and_then(Value::as_str) {

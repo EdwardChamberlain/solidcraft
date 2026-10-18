@@ -92,6 +92,20 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                     }
                 }
             });
+            ui.horizontal(|ui| {
+                let save = ui.button(app.tr("ui.save_all"));
+                crate::scenario::publish_rect("assembly_nav:save_all", save.rect);
+                if save.clicked() {
+                    let r = crate::documents::save_all(app);
+                    let error = !r.failed.is_empty();
+                    let text = if error {
+                        r.failed.join("; ")
+                    } else {
+                        crate::i18n::format("ui.saved_all", &[("saved", &r.saved.to_string()), ("untitled", &r.untitled.len().to_string())])
+                    };
+                    app.set_status(text, error);
+                }
+            });
             ui.separator();
             let rows = rows(app);
             let design = app.session.doc.name.clone();

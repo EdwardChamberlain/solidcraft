@@ -158,3 +158,31 @@ fn a_new_design_records_its_approach_and_opening_one_switches_to_it() {
     assert_eq!(h.app.preferences.modelling_approach, ModellingApproach::Advanced, "opening an Advanced design switches the window to it");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn save_all_writes_every_open_design_and_brings_assemblies_up_to_date() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-save-all-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = advanced();
+    // An assembly with a part, saved; the part is then opened in its own tab and changed.
+    h.app.run("file.save", json!({"path": dir.join("case.solidcraft")})).unwrap();
+    h.app.run("component.new_part", json!({"name": "Lid"})).unwrap();
+    h.app.run("file.save", json!({})).unwrap();
+    let volume = |h: &mut Harness| h.app.session.execute("inspect.measure", &json!({})).unwrap()["total"]["volume_mm3"].as_f64().unwrap();
+    assert!((volume(&mut h) - 1000.0).abs() < 1e-6, "the placeholder box");
+    h.app.open_path(&dir.join("Lid.solidcraft").display().to_string());
+    h.frames(2);
+    assert_eq!(h.app.docs.count(), 2);
+    h.app.run("solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Extra", "corner": [50, 0, 0]})).unwrap();
+    let r = crate::documents::save_all(&mut h.app);
+    assert_eq!((r.saved, r.untitled.len(), r.failed.len()), (1, 0, 0), "{r:?}");
+    assert_eq!(r.updated, 1, "the assembly took the part's new body");
+    crate::documents::control(&mut h.app, &json!({"action":"switch","index":0}));
+    h.frames(2);
+    assert!((volume(&mut h) - 2000.0).abs() < 1e-6, "{}", volume(&mut h));
+    // The update changed the assembly, so the next Save All writes it; then nothing is left.
+    assert_eq!(crate::documents::save_all(&mut h.app).saved, 1);
+    assert_eq!(crate::documents::save_all(&mut h.app).saved, 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}

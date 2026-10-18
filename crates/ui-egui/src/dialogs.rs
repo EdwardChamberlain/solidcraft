@@ -125,6 +125,11 @@ pub enum Kind {
         t: String,
         sketch: Option<u64>,
     },
+    /// A datum whose method is picked from what is selected (`dialogs_datum::infer`).
+    DatumInferred {
+        class: crate::dialogs_datum::Class,
+        value: String,
+    },
     /// A datum (plane, axis or point) by one of the methods in `dialogs_datum::METHODS`.
     Datum {
         method: usize,
@@ -827,6 +832,7 @@ impl Dialog {
                 | Kind::PathPlane { .. }
                 | Kind::Midplane
                 | Kind::Datum { .. }
+                | Kind::DatumInferred { .. }
                 | Kind::Move { .. }
                 | Kind::Hole { .. }
                 | Kind::Primitive { .. }
@@ -1421,6 +1427,11 @@ fn title(k: &Kind) -> &'static str {
         Kind::Material { .. } => "PHYSICAL MATERIAL",
         Kind::OffsetPlane { .. } => "OFFSET PLANE",
         Kind::Midplane => "MIDPLANE",
+        Kind::DatumInferred { class, .. } => match class {
+            crate::dialogs_datum::Class::Axis => "DATUM AXIS",
+            crate::dialogs_datum::Class::Point => "DATUM POINT",
+            crate::dialogs_datum::Class::Plane => "DATUM PLANE",
+        },
         Kind::Datum { method, .. } => match crate::dialogs_datum::METHODS.get(*method).map(|m| m.class) {
             Some(crate::dialogs_datum::Class::Axis) => "DATUM AXIS",
             Some(crate::dialogs_datum::Class::Point) => "DATUM POINT",
@@ -2770,6 +2781,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         ui.end_row();
                     }
                     Kind::Datum { method, value } => enter |= crate::dialogs_datum::value_row(ui, *method, value),
+                    Kind::DatumInferred { class, value } => {
+                        let picked = d.inputs.first().map_or(0, |i| i.items.len());
+                        enter |= crate::dialogs_datum::inferred_value_row(ui, *class, picked, value);
+                    }
                     Kind::NewPart { name } => {
                         row_label(ui, "Part name");
                         enter |= field(ui, name);
@@ -4097,6 +4112,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             ("solid.sweep", p)
         }
         Kind::Datum { .. } => crate::dialogs_datum::command(app, d)?,
+        Kind::DatumInferred { .. } => crate::dialogs_datum::infer(app, d)?,
         Kind::NewPart { name } => ("component.new_part", json!({"name": name.trim()})),
         Kind::OffsetPlane { offset } => {
             need(0, "a plane")?;
@@ -4690,6 +4706,25 @@ pub(crate) fn face_sel(s: &Session, p0: Vec3) -> Option<Sel> {
     best.filter(|(d, _)| *d < 1e-3 + 1e-6 * p0.len()).map(|x| x.1)
 }
 
+/// The model vertex at `p0`, as a dialog pick.
+pub(crate) fn vertex_sel(s: &Session, p0: Vec3) -> Option<Sel> {
+    let st = s.world_state();
+    let frames = stored_frames(s);
+    let mut best: Option<(f64, Sel)> = None;
+    for b in &st.bodies {
+        let p = stored_on(&frames, &b.name, p0);
+        for e in b.mesh().edges.iter() {
+            for end in [e.first(), e.last()].into_iter().flatten() {
+                let d = p.dist(*end);
+                if best.as_ref().is_none_or(|(bd, _)| d < *bd) {
+                    best = Some((d, Sel::Vertex { body: b.name.clone(), point: *end }));
+                }
+            }
+        }
+    }
+    best.filter(|(d, _)| *d < 1e-3 + 1e-6 * p0.len()).map(|x| x.1)
+}
+
 fn emboss_face_sel(s: &Session, component: u64, face: &solidcraft_engine::doc::EmbossFace, persistent: &str) -> Option<Sel> {
     let source = s.model.state();
     let body = source.body(&face.body)?;
@@ -4703,7 +4738,7 @@ fn emboss_face_sel(s: &Session, component: u64, face: &solidcraft_engine::doc::E
 }
 
 /// A picked plane or planar face as `construct.plane.*` takes it.
-fn plane_arg(app: &SolveApp, sel: Option<&Sel>) -> Result<Value, String> {
+pub(crate) fn plane_arg(app: &SolveApp, sel: Option<&Sel>) -> Result<Value, String> {
     match sel {
         Some(Sel::Plane { name }) => Ok(json!(name)),
         Some(face @ Sel::Face { .. }) => crate::sketch_attachment_ui::face_plane(app, face).ok_or("the picked face is no longer in the model".into()),
@@ -4765,6 +4800,12 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
     let st = s.world_state();
     let start = |cmd: &str| Dialog::for_command(app, cmd);
     let mut d = match &f.kind {
+        FeatureKind::ConstructionAxis { .. } | FeatureKind::ConstructionPoint { .. } | FeatureKind::ConstructionPlane { .. }
+            if app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced
+                && let Some(d) = crate::dialogs_datum::refill(app, &f.kind) =>
+        {
+            d
+        }
         FeatureKind::Extrude { sketch, profiles, extent, operation, targets, thin } => {
             let mut d = start("solid.extrude")?;
             d.kind = Kind::Extrude {

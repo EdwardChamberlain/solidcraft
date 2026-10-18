@@ -39,8 +39,9 @@ A component of a part can be linked to another part file (`component.insert_desi
 - **No cycles.** A design can't link itself, nor a design that already links it however far down
   (`reaches`, depth and file counts capped; a chain too long to follow is refused).
 - **New Part** makes `<name>.solidcraft` beside the saved design (or at `path`), with the same
-  approach, and links it in one step. A part needs a solid to be linked, so the new file starts
-  with a 10 mm "Placeholder" box; delete it after modelling the part.
+  approach, and links it in one step. The part starts empty, so it links as an empty component (no
+  Import feature yet); open it, model something, and the bodies arrive on the next update. If every
+  body is later deleted from the part, the component goes back to empty.
 - Break Link keeps the bodies and forgets the file.
 
 ## Open parts, the file store and recovery

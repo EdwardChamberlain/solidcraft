@@ -155,6 +155,15 @@ pub fn class_of(kind: &Kind) -> Option<Class> {
     }
 }
 
+/// The heading of a datum dialog in the Advanced approach (its Type says which method).
+pub fn class_title(kind: &Kind) -> Option<&'static str> {
+    Some(match class_of(kind)? {
+        Class::Plane => "DATUM PLANE",
+        Class::Axis => "DATUM AXIS",
+        Class::Point => "DATUM POINT",
+    })
+}
+
 /// The command a dialog kind runs.
 fn command_of(kind: &Kind) -> Option<&'static str> {
     Some(match kind {

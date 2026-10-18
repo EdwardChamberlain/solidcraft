@@ -1262,8 +1262,15 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             // Each approach brings its own mouse mapping while the default one is still chosen.
             if app.preferences.modelling_approach != approach_before {
                 match (app.preferences.modelling_approach, app.preferences.nav.as_str()) {
-                    (ModellingApproach::Advanced, "fusion") => app.preferences.nav = "nx".into(),
-                    (ModellingApproach::Classic, "nx") => app.preferences.nav = "fusion".into(),
+                    // The right button opens the radial menu, which the NX mapping leaves it free for.
+                    (ModellingApproach::Advanced, "fusion") => {
+                        app.preferences.nav = "nx".into();
+                        app.preferences.radial_context_menu = true;
+                    }
+                    (ModellingApproach::Classic, "nx") => {
+                        app.preferences.nav = "fusion".into();
+                        app.preferences.radial_context_menu = false;
+                    }
                     _ => {}
                 }
             }

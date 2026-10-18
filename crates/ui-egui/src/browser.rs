@@ -872,7 +872,7 @@ fn doc_settings(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
     }
 }
 
-fn origin_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
+pub(crate) fn origin_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
     let key = "origin";
     let open = is_open(app, key, false);
     let r = draw_row(

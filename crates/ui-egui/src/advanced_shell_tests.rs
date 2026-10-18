@@ -172,7 +172,7 @@ fn save_all_writes_every_open_design_and_brings_assemblies_up_to_date() {
     h.app.run("component.new_part", json!({"name": "Lid"})).unwrap();
     h.app.run("file.save", json!({})).unwrap();
     let volume = |h: &mut Harness| h.app.session.execute("inspect.measure", &json!({})).unwrap()["total"]["volume_mm3"].as_f64().unwrap();
-    assert!((volume(&mut h) - 1000.0).abs() < 1e-6, "the placeholder box");
+    assert!(h.app.session.world_state().bodies.is_empty(), "a new part has nothing in it yet");
     h.app.open_path(&dir.join("Lid.solidcraft").display().to_string());
     h.frames(2);
     assert_eq!(h.app.docs.count(), 2);
@@ -182,7 +182,7 @@ fn save_all_writes_every_open_design_and_brings_assemblies_up_to_date() {
     assert_eq!(r.updated, 1, "the assembly took the part's new body");
     crate::documents::control(&mut h.app, &json!({"action":"switch","index":0}));
     h.frames(2);
-    assert!((volume(&mut h) - 2000.0).abs() < 1e-6, "{}", volume(&mut h));
+    assert!((volume(&mut h) - 1000.0).abs() < 1e-6, "{}", volume(&mut h));
     // The update changed the assembly, so the next Save All writes it; then nothing is left.
     assert_eq!(crate::documents::save_all(&mut h.app).saved, 1);
     assert_eq!(crate::documents::save_all(&mut h.app).saved, 0);
@@ -219,8 +219,8 @@ fn switching_to_an_assembly_shows_the_part_open_in_another_tab_as_it_is_now() {
     h.app.run("component.new_part", json!({"name": "Lid"})).unwrap();
     h.app.run("file.save", json!({})).unwrap();
     let volume = |h: &mut Harness| h.app.session.execute("inspect.measure", &json!({})).unwrap()["total"]["volume_mm3"].as_f64().unwrap();
-    assert!((volume(&mut h) - 1000.0).abs() < 1e-6);
-    // The part in its own tab gets a second body; it is NOT saved.
+    assert!(h.app.session.world_state().bodies.is_empty());
+    // The part in its own tab gets a body; it is NOT saved.
     h.app.open_path(&dir.join("Lid.solidcraft").display().to_string());
     h.frames(2);
     h.app.run("solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Extra", "corner": [50, 0, 0]})).unwrap();
@@ -229,11 +229,11 @@ fn switching_to_an_assembly_shows_the_part_open_in_another_tab_as_it_is_now() {
     crate::documents::switch(&mut h.app, 0);
     h.frames(2);
     assert_eq!(h.app.session.doc.name, "case");
-    assert!((volume(&mut h) - 2000.0).abs() < 1e-6, "{}", volume(&mut h));
+    assert!((volume(&mut h) - 1000.0).abs() < 1e-6, "{}", volume(&mut h));
     // The part's file is untouched.
     let mut on_disk = solidcraft_engine::Session::default();
     on_disk.execute("doc.open", &json!({"path": dir.join("Lid.solidcraft")})).unwrap();
-    assert_eq!(on_disk.doc.features.len(), 1);
+    assert!(on_disk.doc.features.is_empty());
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -251,7 +251,71 @@ fn classic_keeps_a_link_until_update_links_is_asked() {
     h.app.run("solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Extra", "corner": [50, 0, 0]})).unwrap();
     crate::documents::switch(&mut h.app, 0);
     h.frames(2);
-    let volume = h.app.session.execute("inspect.measure", &json!({})).unwrap()["total"]["volume_mm3"].as_f64().unwrap();
-    assert!((volume - 1000.0).abs() < 1e-6, "Classic did not update on its own: {volume}");
+    assert!(h.app.session.world_state().bodies.is_empty(), "Classic did not update on its own");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_part_navigator_starts_with_the_origin_and_picking_a_plane_there_fills_the_datum_dialog() {
+    let mut h = advanced();
+    assert!(crate::scenario::handle_at("row:Origin").is_some(), "the Origin row heads the tree");
+    assert!(crate::scenario::handle_at("row:XY").is_none(), "folded until opened");
+    h.app.tree.expanded.insert("origin".into());
+    h.frames(3);
+    assert!(crate::scenario::handle_at("row:XY").is_some(), "the origin planes are listed");
+    h.app.start("construct.plane.offset");
+    h.frames(3);
+    // Clicking the row goes through the same path a pick in the viewport takes.
+    h.step(&json!({"click": {"handle": "row:XY"}})).unwrap();
+    h.frames(3);
+    let picked = h.app.dialog.as_ref().map(|d| d.inputs[0].items.clone()).unwrap_or_default();
+    assert_eq!(picked, vec![solidcraft_engine::Sel::Plane { name: "XY".into() }]);
+}
+
+#[test]
+fn the_resource_bar_has_a_tab_for_each_navigator_and_a_context_menu_fixes_a_component() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-resource-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = advanced();
+    for tab in ["part", "assembly"] {
+        assert!(rect_of(&format!("navigator:{tab}")).is_some(), "no {tab} tab on the resource bar");
+    }
+    h.app.run("file.save", json!({"path": dir.join("case.solidcraft")})).unwrap();
+    h.app.run("component.new_part", json!({"name": "Lid"})).unwrap();
+    let rows = crate::shell::assembly_nav::rows(&h.app);
+    assert!(!rows[0].grounded && !rows[0].hidden && rows[0].placements.len() == 1);
+    // What the menu runs.
+    let occurrence = rows[0].placements[0];
+    h.app.run("occurrence.ground", json!({"occurrence": occurrence, "grounded": true})).unwrap();
+    h.app.run("browser.visibility", json!({"visible": false, "paths": [[occurrence]]})).unwrap();
+    let rows = crate::shell::assembly_nav::rows(&h.app);
+    assert!(rows[0].grounded && rows[0].hidden, "{rows:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn feature_types_read_as_words_and_every_datum_dialog_is_headed_datum() {
+    use crate::shell::part_nav::friendly_kind;
+    assert_eq!(friendly_kind("ExtrudeFeature"), "Extrude");
+    assert_eq!(friendly_kind("SurfaceExtrudeFeature"), "Surface Extrude");
+    assert_eq!(friendly_kind("Sketch"), "Sketch");
+    let mut h = advanced();
+    for (cmd, title) in [("construct.plane.offset", "DATUM PLANE"), ("construct.axis.edge", "DATUM AXIS"), ("construct.point.vertex", "DATUM POINT")]
+    {
+        h.app.dialog = None;
+        h.app.start(cmd);
+        h.frames(2);
+        let kind = &h.app.dialog.as_ref().unwrap().kind;
+        assert_eq!(crate::dialogs_datum::class_title(kind), Some(title), "{cmd}");
+    }
+}
+
+#[test]
+fn a_new_part_asks_for_the_design_to_be_saved_first() {
+    let mut h = advanced();
+    h.app.start("component.new_part");
+    h.frames(2);
+    assert!(h.app.dialog.is_none(), "no dialog while there is nowhere to put the part");
+    assert!(h.app.status.as_ref().is_some_and(|(text, _, error)| *error && text.contains("Save this design first")), "{:?}", h.app.status);
 }

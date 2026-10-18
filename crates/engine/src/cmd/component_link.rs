@@ -9,7 +9,9 @@
 //! A part may link parts that link parts: a linked design is brought up to date from its own
 //! links before its bodies are read, so editing a leaf reaches every design above it on the next
 //! update. A design can never link one that already links it, however far down (`reaches`).
-//! New Part (`component.new_part`) makes the part file and links it in one step.
+//! New Part (`component.new_part`) makes the part file and links it in one step. A part with no
+//! solid bodies yet (a new one) links as an empty component; the bodies arrive on the update that
+//! follows once something is modelled in it, and go again if they are all deleted.
 
 use std::path::{Component as PathPart, Path, PathBuf};
 
@@ -176,7 +178,7 @@ pub fn referenced_files(path: &str) -> Result<Vec<String>> {
 
 /// The solid bodies of the design at `file`, evaluated, as an Import feature: its name, its
 /// identity and the feature.
-fn linked_bodies(file: &Path, own: Option<&str>) -> Result<(String, String, solidcraft_io::StepFeature)> {
+fn linked_bodies(file: &Path, own: Option<&str>) -> Result<(String, String, Option<solidcraft_io::StepFeature>)> {
     let shown = file.display().to_string();
     if let Some(o) = own {
         if absolute(Path::new(o)) == absolute(file) {
@@ -201,8 +203,9 @@ fn linked_bodies(file: &Path, own: Option<&str>) -> Result<(String, String, soli
     }
     let world = part.world_state();
     let solids: Vec<String> = world.bodies.iter().filter(|b| !b.body.is_mesh()).map(|b| b.name.clone()).collect();
+    // Nothing modelled yet: the part links as an empty component.
     if solids.is_empty() {
-        return Err(EngineError::Other(format!("{shown}: the design has no solid bodies to link")));
+        return Ok((name, id, None));
     }
     let step = solidcraft_io::export(&part.doc.painted(&world), &solids, solidcraft_io::Format::Step, &name)
         .map_err(|e| EngineError::Other(format!("{shown}: {e}")))?;
@@ -210,7 +213,17 @@ fn linked_bodies(file: &Path, own: Option<&str>) -> Result<(String, String, soli
     if world.bodies.len() > solids.len() {
         feature.warnings.push(format!("{} mesh bodies of {shown} are not linked", world.bodies.len() - solids.len()));
     }
-    Ok((name, id, feature))
+    Ok((name, id, Some(feature)))
+}
+
+/// The bodies of a linked part, as an Import feature in component `comp`.
+fn attach_bodies(s: &mut Session, comp: u64, name: &str, sf: solidcraft_io::StepFeature) -> Result<u64> {
+    let id = s.doc_mut().add_feature(sf.kind, Some(name))?;
+    if let Some(f) = s.doc_mut().feature_mut(id) {
+        f.component = comp;
+        f.body_names = sf.body_names;
+    }
+    Ok(id)
 }
 
 fn component_key(s: &Session, p: &Value, key: &str, cmd: &str) -> Result<u64> {
@@ -239,24 +252,29 @@ fn insert_design(s: &mut Session, p: &Value) -> Result<Value> {
     let made = s.execute("component.create", &create)?;
     let comp = made["component"].as_u64().ok_or_else(|| bad(cmd, "the component was not created"))?;
     let occ = made["occurrence"].as_u64();
-    let id = s.doc_mut().add_feature(sf.kind, Some(&name))?;
-    if let Some(f) = s.doc_mut().feature_mut(id) {
-        f.component = comp;
-        f.body_names = sf.body_names;
-    }
+    // A part with nothing modelled yet has no Import feature (id 0) until it has bodies.
+    let (id, warnings) = match sf {
+        Some(sf) => {
+            let warnings = sf.warnings.clone();
+            (attach_bodies(s, comp, &name, sf)?, warnings)
+        }
+        None => (0, Vec::new()),
+    };
     if let Some(o) = s.doc_mut().occurrences.iter_mut().find(|o| Some(o.id) == occ) {
         o.transform[3] = [translate.x, translate.y, translate.z, 1.0];
     }
     let path = stored(s.path.as_deref(), &file);
     s.doc_mut().links.insert(comp, DesignLink { path: path.clone(), feature: id, id: design_id });
     s.refresh();
-    if let Some(e) = s.model.result(id).and_then(|r| r.error.clone()) {
+    if id != 0
+        && let Some(e) = s.model.result(id).and_then(|r| r.error.clone())
+    {
         return Err(EngineError::Other(e));
     }
     let st = s.model.state();
-    let bodies: Vec<&str> = st.bodies.iter().filter(|b| b.feature == id).map(|b| b.name.as_str()).collect();
+    let bodies: Vec<&str> = st.bodies.iter().filter(|b| id != 0 && b.feature == id).map(|b| b.name.as_str()).collect();
     Ok(
-        json!({"component": comp, "occurrence": occ, "name": name, "feature": id, "path": path, "bodies": bodies, "created_bodies": bodies, "warnings": sf.warnings}),
+        json!({"component": comp, "occurrence": occ, "name": name, "feature": id, "path": path, "bodies": bodies, "created_bodies": bodies, "warnings": warnings}),
     )
 }
 
@@ -279,11 +297,10 @@ fn new_part(s: &mut Session, p: &Value) -> Result<Value> {
     if solidcraft_io::vfs::exists(&shown) {
         return Err(bad(cmd, format!("{shown} exists already; give another name or use component.insert_design")));
     }
-    // The new part: an empty design of the same approach, with a body so it can be linked at
-    // once (a link needs a solid; the owner replaces it by modelling in the part).
+    // The new part: an empty design of the same approach. It links as an empty component; its
+    // bodies come in once something is modelled in it.
     let mut part = Session::new(Document::new(name));
     part.doc_mut().approach = s.doc.approach;
-    part.execute("solid.box", &json!({"length": 10, "width": 10, "height": 10, "body_name": name, "name": "Placeholder"}))?;
     part.execute("file.save", &json!({"path": shown}))?;
     let mut insert = json!({"path": shown, "name": name});
     for key in ["parent", "translate"] {
@@ -313,16 +330,25 @@ fn update_links(s: &mut Session, p: &Value) -> Result<Value> {
             s.doc_mut().links.remove(&comp);
             continue;
         };
-        let Some(FeatureKind::Import { step: old, .. }) = s.doc.feature(link.feature).filter(|f| f.component == comp).map(|f| &f.kind) else {
-            return Err(bad(
-                cmd,
-                format!("{cname}: its linked bodies (feature {}) are gone; break the link or insert the design again", link.feature),
-            ));
+        // The Import feature holding the part's bodies (none while the part has no solids).
+        let held = if link.feature == 0 {
+            None
+        } else {
+            match s.doc.feature(link.feature).filter(|f| f.component == comp).map(|f| &f.kind) {
+                Some(FeatureKind::Import { step, .. }) => Some(step.clone()),
+                _ => {
+                    return Err(bad(
+                        cmd,
+                        format!("{cname}: its linked bodies (feature {}) are gone; break the link or insert the design again", link.feature),
+                    ));
+                }
+            }
         };
-        let old = old.clone();
         let file = resolve(s.path.as_deref(), &link.path);
-        let (_, design_id, sf) = linked_bodies(&file, s.path.as_deref()).map_err(|e| bad(cmd, format!("{cname}: {e}")))?;
-        warnings.extend(sf.warnings.iter().cloned());
+        let (_, design_id, found) = linked_bodies(&file, s.path.as_deref()).map_err(|e| bad(cmd, format!("{cname}: {e}")))?;
+        if let Some(sf) = &found {
+            warnings.extend(sf.warnings.iter().cloned());
+        }
         if !link.id.is_empty() && !design_id.is_empty() && link.id != design_id {
             warnings.push(format!("{cname}: the file {} is a different design now than the one that was linked", link.path));
         }
@@ -331,21 +357,43 @@ fn update_links(s: &mut Session, p: &Value) -> Result<Value> {
         {
             l.id = design_id;
         }
-        if matches!(&sf.kind, FeatureKind::Import { step, .. } if *step == old) {
-            unchanged.push(cname);
-            continue;
-        }
-        if let Some(f) = s.doc_mut().feature_mut(link.feature) {
-            // Bodies keep their names where the design still has as many.
-            if f.body_names.len() != sf.body_names.len() {
-                f.body_names = sf.body_names;
+        match (held, found) {
+            // Still nothing modelled in it.
+            (None, None) => unchanged.push(cname),
+            // Its first bodies.
+            (None, Some(sf)) => {
+                let id = attach_bodies(s, comp, &cname, sf)?;
+                if let Some(l) = s.doc_mut().links.get_mut(&comp) {
+                    l.feature = id;
+                }
+                updated.push(cname);
             }
-            f.kind = sf.kind;
+            // Every body deleted from it.
+            (Some(_), None) => {
+                s.doc_mut().delete_feature(link.feature)?;
+                if let Some(l) = s.doc_mut().links.get_mut(&comp) {
+                    l.feature = 0;
+                }
+                updated.push(cname);
+            }
+            (Some(old), Some(sf)) => {
+                if matches!(&sf.kind, FeatureKind::Import { step, .. } if *step == old) {
+                    unchanged.push(cname);
+                    continue;
+                }
+                if let Some(f) = s.doc_mut().feature_mut(link.feature) {
+                    // Bodies keep their names where the design still has as many.
+                    if f.body_names.len() != sf.body_names.len() {
+                        f.body_names = sf.body_names;
+                    }
+                    f.kind = sf.kind;
+                }
+                updated.push(cname);
+            }
         }
-        updated.push(cname);
     }
     s.refresh();
-    if let Some(e) = s.doc.links.values().find_map(|l| s.model.result(l.feature).and_then(|r| r.error.clone())) {
+    if let Some(e) = s.doc.links.values().filter(|l| l.feature != 0).find_map(|l| s.model.result(l.feature).and_then(|r| r.error.clone())) {
         return Err(EngineError::Other(e));
     }
     Ok(json!({"updated": updated, "unchanged": unchanged, "warnings": warnings}))
@@ -616,7 +664,7 @@ mod tests {
             run(&mut part, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Extra", "corner": [50, 0, 0]}));
             run(&mut part, "file.save", json!({}));
             assert_eq!(run(&mut s, "component.update_links", json!({}))["updated"], json!(["Lid"]));
-            assert!((volume(&mut s) - 2000.0).abs() < 1e-6);
+            assert!((volume(&mut s) - 1000.0).abs() < 1e-6, "the part's one body");
             // A third session opens the assembly from the store.
             let mut again = Session::default();
             run(&mut again, "doc.open", json!({"path": case}));
@@ -673,6 +721,43 @@ mod tests {
         // The registration ended with the call: the file is read again, and the saved part wins.
         assert_eq!(run(&mut case, "component.update_links", json!({}))["updated"], json!(["plate"]));
         assert!((volume(&mut case) - 6000.0).abs() < 1e-6);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_new_part_links_empty_gets_its_bodies_once_modelled_and_loses_them_when_they_go() {
+        let dir = temp_dir("empty-part");
+        let case_file = dir.join("case.solidcraft");
+        let mut case = Session::default();
+        run(&mut case, "file.save", json!({"path": case_file}));
+        let made = run(&mut case, "component.new_part", json!({"name": "Lid"}));
+        assert_eq!(made["bodies"], json!([]), "{made}");
+        assert_eq!(case.doc.links.values().next().map(|l| l.feature), Some(0), "no Import feature yet");
+        assert!(case.world_state().bodies.is_empty());
+        assert_eq!(run(&mut case, "component.update_links", json!({}))["unchanged"], json!(["Lid"]), "still nothing modelled");
+        // Something is modelled in the part and saved.
+        let lid_file = dir.join("Lid.solidcraft");
+        let mut part = Session::default();
+        run(&mut part, "doc.open", json!({"path": lid_file}));
+        run(&mut part, "solid.box", json!({"length": 10, "width": 20, "height": 30, "body_name": "Plate"}));
+        run(&mut part, "file.save", json!({}));
+        assert_eq!(run(&mut case, "component.update_links", json!({}))["updated"], json!(["Lid"]));
+        assert!((volume(&mut case) - 6000.0).abs() < 1e-6);
+        let feature = case.doc.links.values().next().map(|l| l.feature).unwrap();
+        assert_ne!(feature, 0);
+        assert!(case.doc.feature(feature).is_some_and(|f| matches!(f.kind, FeatureKind::Import { .. })));
+        // The body is deleted from the part: the component is empty again.
+        run(&mut part, "timeline.delete", json!({"feature": "Box1"}));
+        run(&mut part, "file.save", json!({}));
+        assert_eq!(run(&mut case, "component.update_links", json!({}))["updated"], json!(["Lid"]));
+        assert!(case.world_state().bodies.is_empty());
+        assert_eq!(case.doc.links.values().next().map(|l| l.feature), Some(0));
+        assert!(case.doc.feature(feature).is_none(), "the Import feature went with its bodies");
+        // It saves and reopens as it is, with its link.
+        run(&mut case, "file.save", json!({}));
+        let mut again = Session::default();
+        run(&mut again, "doc.open", json!({"path": case_file}));
+        assert_eq!(again.doc.links.len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -2,7 +2,7 @@
 //! part file linked in (or a component kept inside this file), with where its file is, whether
 //! the file is there, how many times it is placed, and what to do with it.
 
-use egui::{RichText, vec2};
+use egui::RichText;
 use serde_json::json;
 
 use crate::SolveApp;
@@ -23,6 +23,10 @@ pub struct Row {
     /// Placements of the component.
     pub count: usize,
     pub grounded: bool,
+    /// The component's placements in the design itself (their ids), for Fix and Show/Hide.
+    pub placements: Vec<u64>,
+    /// Every placement of it is hidden.
+    pub hidden: bool,
 }
 
 /// The components of the design, parents before their children.
@@ -41,6 +45,7 @@ pub fn rows(app: &SolveApp) -> Vec<Row> {
         let found = solidcraft_engine::io::vfs::exists(&shown);
         Some((link.path.clone(), shown, found))
     };
+    let doc_hidden = &app.session.visibility.hidden_occurrences;
     // Depth first, each component before its own children, siblings in file order. Bounded, as a
     // design file is hostile input: a parent cycle can't loop it.
     let mut out = Vec::new();
@@ -61,6 +66,11 @@ pub fn rows(app: &SolveApp) -> Vec<Row> {
             file: link.map(|(_, file, _)| file),
             count: placements.len(),
             grounded: placements.iter().any(|o| o.grounded),
+            // Only placements directly in the design have a path of their own to hide.
+            hidden: c.parent == 0
+                && !placements.is_empty()
+                && placements.iter().all(|o| doc_hidden.iter().any(|path| path.len() == 1 && path.first() == Some(&o.id))),
+            placements: placements.iter().map(|o| o.id).collect(),
         });
         stack.extend(doc.components.iter().filter(|k| k.parent == id).rev().map(|k| (k.id, depth + 1)));
     }
@@ -75,7 +85,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(6, 6)))
         .show(ui, |ui| {
             ui.label(RichText::new(app.tr("ui.assembly_nav_heading")).size(11.0).strong().color(t.text_dim));
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 if ui.button(app.tr("ui.add_component")).clicked() {
                     app.start("component.insert_design");
                 }
@@ -93,8 +103,6 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                         Err(e) => app.set_status(e, true),
                     }
                 }
-            });
-            ui.horizontal(|ui| {
                 let save = ui.button(app.tr("ui.save_all"));
                 crate::scenario::publish_rect("assembly_nav:save_all", save.rect);
                 if save.clicked() {
@@ -132,31 +140,70 @@ fn one_row(app: &mut SolveApp, ui: &mut egui::Ui, row: &Row) {
             (Some(_), true) => "ui.component_linked",
             (Some(_), false) => "ui.component_missing",
         };
-        let label = ui.label(RichText::new(&row.name).color(if row.found { t.text } else { t.error }));
+        let colour = if !row.found {
+            t.error
+        } else if row.hidden {
+            t.text_dim
+        } else {
+            t.text
+        };
+        let label = ui.add(egui::Label::new(RichText::new(&row.name).color(colour)).sense(egui::Sense::click()));
         crate::scenario::publish_rect(&format!("assembly_nav:row:{}", row.name), label.rect);
         let mut hover = app.tr(status).to_string();
         if let Some(path) = &row.path {
             hover = format!("{hover}: {path}");
         }
-        label.on_hover_text(hover);
+        let label = label.on_hover_text(hover);
         ui.label(RichText::new(format!("×{}", row.count)).size(11.0).color(t.text_dim));
         if row.grounded {
             ui.label(RichText::new(app.tr("ui.component_fixed")).size(11.0).color(t.text_dim));
         }
-        if let Some(file) = &row.file {
-            if row.found {
-                let open = ui.small_button(app.tr("ui.open_part"));
-                crate::scenario::publish_rect(&format!("assembly_nav:open:{}", row.name), open.rect);
-                if open.clicked() {
-                    app.open_path(file);
-                }
-            }
-            if ui.small_button(app.tr("ui.break_link")).clicked()
-                && let Err(e) = app.run("component.break_link", json!({"component": row.component}))
+        if row.hidden {
+            ui.label(RichText::new(app.tr("ui.component_hidden")).size(11.0).color(t.text_dim));
+        }
+        let mut open = false;
+        if row.file.is_some() && row.found {
+            let button = ui.small_button(app.tr("ui.open_part"));
+            crate::scenario::publish_rect(&format!("assembly_nav:open:{}", row.name), button.rect);
+            open |= button.clicked();
+        }
+        // The same and the rest, on a right click.
+        label.context_menu(|ui| {
+            if let Some(file) = &row.file
+                && row.found
+                && ui.button(app.tr("ui.open_part_displayed")).clicked()
             {
-                app.set_status(e, true);
+                app.open_path(file);
+                ui.close();
             }
+            let (show_hide, to_visible) = if row.hidden { ("ui.show_component", true) } else { ("ui.hide_component", false) };
+            if !row.placements.is_empty() && ui.button(app.tr(show_hide)).clicked() {
+                let paths: Vec<Vec<u64>> = row.placements.iter().map(|id| vec![*id]).collect();
+                if let Err(e) = app.run("browser.visibility", json!({"visible": to_visible, "paths": paths})) {
+                    app.set_status(e, true);
+                }
+                ui.close();
+            }
+            let fix = if row.grounded { "ui.free_component" } else { "ui.fix_component" };
+            if !row.placements.is_empty() && ui.button(app.tr(fix)).clicked() {
+                for id in &row.placements {
+                    if let Err(e) = app.run("occurrence.ground", json!({"occurrence": id, "grounded": !row.grounded})) {
+                        app.set_status(e, true);
+                        break;
+                    }
+                }
+                ui.close();
+            }
+            if row.path.is_some() && ui.button(app.tr("ui.break_link")).clicked() {
+                if let Err(e) = app.run("component.break_link", json!({"component": row.component})) {
+                    app.set_status(e, true);
+                }
+                ui.close();
+            }
+        });
+        if open && let Some(file) = &row.file {
+            app.open_path(file);
         }
     });
-    ui.add_space(vec2(0.0, 2.0).y);
+    ui.add_space(2.0);
 }

@@ -41,6 +41,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     selection_bar(app, ui);
     cue_line(app, ui);
     palette::palette_bar(app, ui);
+    resource_bar(app, ui);
     if app.ui.show_browser {
         match pane(ui.ctx()) {
             Pane::Part => super::part_nav::show(app, ui),
@@ -61,33 +62,57 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     });
 }
 
-/// The strip under the ribbon: which navigator is open, and what a click in the viewport picks.
+/// The strip under the ribbon: what a click in the viewport picks.
 fn selection_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     egui::Panel::top("sc_selection_bar").exact_size(28.0).frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(8, 3))).show(
         ui,
         |ui| {
             ui.horizontal_centered(|ui| {
-                let current = pane(ui.ctx());
-                for (which, label) in [(Pane::Part, "Part Navigator"), (Pane::Assembly, "Assembly Navigator")] {
-                    let shown = app.ui.show_browser && current == which;
-                    let response = ui.selectable_label(shown, app.tr_label(label));
-                    crate::scenario::publish_rect(&format!("navigator:{}", if which == Pane::Part { "part" } else { "assembly" }), response.rect);
-                    if response.clicked() {
-                        // Clicking the open pane's tab hides the pane, as a resource bar does.
-                        if shown {
-                            app.ui.show_browser = false;
-                        } else {
-                            app.ui.show_browser = true;
-                            set_pane(ui.ctx(), which);
-                        }
-                    }
-                }
-                ui.separator();
                 ui.menu_button(app.tr_label("Selection filter"), |ui| toolbar::selection_filter(app, ui));
             });
         },
     );
+}
+
+/// The resource bar at the left edge: one vertical tab for each navigator. Clicking the open
+/// navigator's tab hides it, as a resource bar does.
+fn resource_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
+    let t = Tokens::get();
+    let current = pane(ui.ctx());
+    egui::Panel::left("sc_resource_bar")
+        .exact_size(30.0)
+        .resizable(false)
+        .frame(egui::Frame::NONE.fill(t.toolbar).inner_margin(egui::Margin::symmetric(2, 6)))
+        .show(ui, |ui| {
+            for (which, label, key) in [(Pane::Part, "Part Navigator", "part"), (Pane::Assembly, "Assembly Navigator", "assembly")] {
+                let text = app.tr_label(label).to_string();
+                let galley = ui.painter().layout_no_wrap(text.clone(), egui::FontId::proportional(12.0), t.text);
+                let height = galley.size().x + 20.0;
+                let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::click());
+                response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &text));
+                crate::scenario::publish_rect(&format!("navigator:{key}"), rect);
+                let shown = app.ui.show_browser && current == which;
+                if shown {
+                    ui.painter().rect_filled(rect, 3.0, t.accent.gamma_multiply(0.35));
+                } else if response.hovered() {
+                    ui.painter().rect_filled(rect, 3.0, t.hover);
+                }
+                // Text reads bottom to top, as on a resource bar.
+                let colour = if shown { t.text } else { t.text_dim };
+                let galley = ui.painter().layout_no_wrap(text, egui::FontId::proportional(12.0), colour);
+                let at = egui::pos2(rect.center().x - galley.size().y / 2.0, rect.bottom() - 10.0);
+                ui.painter().add(egui::epaint::TextShape::new(at, galley, colour).with_angle(-std::f32::consts::FRAC_PI_2));
+                if response.clicked() {
+                    if shown {
+                        app.ui.show_browser = false;
+                    } else {
+                        app.ui.show_browser = true;
+                        set_pane(ui.ctx(), which);
+                    }
+                }
+            }
+        });
 }
 
 /// What to do next: the dialog's open pick, the sketch's state, or the last thing that happened.
@@ -119,7 +144,7 @@ pub fn cue_text(app: &SolveApp) -> String {
     if let Some((text, _, _)) = &app.status {
         return text.clone();
     }
-    String::new()
+    app.tr("ui.cue_idle").to_string()
 }
 
 fn cue_line(app: &mut SolveApp, ui: &mut egui::Ui) {

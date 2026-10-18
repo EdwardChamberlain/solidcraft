@@ -1520,11 +1520,26 @@ const LABEL_MAX_W: f32 = 150.0;
 pub(crate) fn section(ui: &mut egui::Ui, id: &str, title: &str, open: bool) -> bool {
     let key = egui::Id::new(("sc_dialog_group", id));
     let mut now = ui.data_mut(|d| *d.get_temp_mut_or(key, open));
-    let arrow = if now { "▾" } else { "▸" };
-    let text = RichText::new(format!("{arrow} {}", tr(title))).strong().size(12.0);
-    let response = ui.add(egui::Label::new(text).selectable(false).sense(egui::Sense::click()));
-    crate::scenario::publish_handle(&format!("dialog:group:{id}"), response.rect.center());
-    if response.clicked() {
+    let t = Tokens::get();
+    let mut clicked = false;
+    let mut centre = egui::Pos2::ZERO;
+    ui.horizontal(|ui| {
+        // The arrow is drawn: the interface font has no triangle glyphs.
+        let (rect, arrow) = ui.allocate_exact_size(vec2(14.0, 16.0), egui::Sense::click());
+        let c = rect.center();
+        let points = if now {
+            vec![c + vec2(-4.0, -2.5), c + vec2(4.0, -2.5), c + vec2(0.0, 3.0)]
+        } else {
+            vec![c + vec2(-2.5, -4.0), c + vec2(3.0, 0.0), c + vec2(-2.5, 4.0)]
+        };
+        ui.painter().add(egui::Shape::convex_polygon(points, t.text_dim, Stroke::NONE));
+        let text = RichText::new(tr(title)).strong().size(12.0);
+        let label = ui.add(egui::Label::new(text).selectable(false).sense(egui::Sense::click()));
+        centre = label.rect.center();
+        clicked = arrow.clicked() || label.clicked();
+    });
+    crate::scenario::publish_handle(&format!("dialog:group:{id}"), centre);
+    if clicked {
         now = !now;
         ui.data_mut(|d| d.insert_temp(key, now));
     }
@@ -2262,7 +2277,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let wide = d.is_wide();
     let pattern_columns = matches!(d.kind, Kind::SketchModify(crate::sketch_modify_ui::Mod::PatternRect { .. }))
         || (matches!(d.kind, Kind::PatternRect { .. }) && d.inputs.first().is_some_and(|i| i.accept == selection::FEATURES));
-    let raw_title = title(&d.kind);
+    // Advanced: every datum dialog is "Datum Plane/Axis/Point", whatever its Type.
+    let raw_title = if advanced { crate::dialogs_datum::class_title(&d.kind).unwrap_or_else(|| title(&d.kind)) } else { title(&d.kind) };
     let heading = if d.editing.is_some() { crate::i18n::format("dialog.edit_title", &[("title", tr(raw_title))]) } else { tr(raw_title).to_string() };
     let frame = crate::frame::dock_frame(ctx, side);
     // The area includes the border as well as the inner margins; reserve all of it so a

@@ -764,6 +764,11 @@ impl SolveApp {
             self.pick_open_command(id, json!({}), &[ext]);
             return;
         }
+        if id == "component.new_part" && self.session.path.is_none() {
+            // The part is made beside this design, so it needs a place first.
+            self.set_status(self.tr("ui.save_before_new_part").to_string(), true);
+            return;
+        }
         if id == "component.insert_design" {
             // Another design becomes a linked component; a STEP or mesh file picked here is
             // inserted the way Insert STEP or Insert Mesh would (#1240).

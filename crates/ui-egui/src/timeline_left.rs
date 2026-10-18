@@ -92,7 +92,14 @@ pub fn left_timeline(app: &mut SolveApp, ui: &mut egui::Ui) {
         .id_salt("sc_left_timeline_scroll")
         .auto_shrink([false, false])
         .scroll_source(egui::scroll_area::ScrollSource { scroll_bar: true, mouse_wheel: true, ..egui::scroll_area::ScrollSource::NONE })
-        .show(ui, |ui| vertical_features(app, ui));
+        .show(ui, |ui| {
+            // The Advanced approach's tree starts with the datum origin (its planes and axes),
+            // where a sketch or a datum dialog picks them from.
+            if app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced {
+                crate::browser::origin_rows(app, ui, 0);
+            }
+            vertical_features(app, ui)
+        });
 }
 
 fn timeline_transport(app: &mut SolveApp, ui: &mut egui::Ui) {

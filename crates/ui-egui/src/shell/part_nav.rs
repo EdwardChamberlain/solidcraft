@@ -27,6 +27,19 @@ pub struct Facts {
     pub would_fail: Vec<String>,
 }
 
+/// A feature type as a person reads it: `SurfaceExtrudeFeature` is "Surface Extrude".
+pub fn friendly_kind(type_name: &str) -> String {
+    let base = type_name.strip_suffix("Feature").filter(|b| !b.is_empty()).unwrap_or(type_name);
+    let mut out = String::new();
+    for (i, c) in base.chars().enumerate() {
+        if i > 0 && c.is_uppercase() {
+            out.push(' ');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// The facts of a feature: parents and values are cheap; children need the design evaluated
 /// without the feature, so they are asked for separately ([`children_of`]).
 pub fn facts(app: &SolveApp, id: u64) -> Option<Facts> {
@@ -35,7 +48,7 @@ pub fn facts(app: &SolveApp, id: u64) -> Option<Facts> {
     Some(Facts {
         id,
         name: f.name.clone(),
-        kind: f.kind.type_name().to_string(),
+        kind: friendly_kind(f.kind.type_name()),
         suppressed: f.suppressed,
         error: app.session.model.result(id).and_then(|r| r.error.clone()),
         inputs: f.kind.inputs().into_iter().map(|(label, e, _)| (label.to_string(), e.to_string())).collect(),
@@ -62,7 +75,7 @@ fn cache_id() -> egui::Id {
 pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     egui::Panel::left("sc_part_navigator")
-        .exact_size(270.0)
+        .exact_size(300.0)
         .resizable(false)
         .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(6, 6)))
         .show(ui, |ui| {

@@ -62,6 +62,61 @@ const SHEET_MODIFY: &[&str] = &[
     "parameters.change",
 ];
 
+/// The Advanced approach's ribbon tabs (Sketch joins them while a sketch is open). Their commands
+/// are the same registry commands as everywhere; only the grouping is this approach's own.
+pub const ADVANCED_TABS: &[&str] = &["HOME", "ASSEMBLY", "ANALYSIS", "VIEW", "TOOLS"];
+
+const ADVANCED_FEATURE: &[&str] = &[
+    "sketch.create",
+    "solid.extrude",
+    "solid.revolve",
+    "solid.hole",
+    "solid.fillet",
+    "solid.chamfer",
+    "solid.shell",
+    "solid.draft",
+    "solid.rib",
+    "solid.sweep",
+    "solid.loft",
+    "solid.thread",
+    "solid.combine",
+];
+
+const ADVANCED_DATUM: &[&str] = &[
+    "construct.plane.offset",
+    "construct.plane.at_angle",
+    "construct.plane.midplane",
+    "construct.plane.three_points",
+    "construct.plane.two_edges",
+    "construct.plane.tangent",
+    "construct.plane.along_path",
+    "construct.plane.perpendicular",
+    "construct.axis.through_cylinder",
+    "construct.axis.normal_to_face",
+    "construct.axis.two_planes",
+    "construct.axis.two_points",
+    "construct.axis.edge",
+    "construct.point.vertex",
+    "construct.point.two_edges",
+    "construct.point.three_planes",
+    "construct.point.center",
+    "construct.point.edge_plane",
+    "construct.point.along_path",
+];
+
+const ADVANCED_PATTERN: &[&str] = &["solid.pattern.rectangular", "solid.pattern.circular", "solid.pattern.path", "solid.mirror"];
+
+const ADVANCED_COMPONENT: &[&str] = &["component.create", "component.insert_design", "component.activate", "component.update_links"];
+
+const ADVANCED_JOINT: &[&str] =
+    &["joint.origin", "joint.create", "joint.as_built", "joint.rigid_group", "joint.drive", "explode.create", "inspect.interference"];
+
+const ADVANCED_INSPECT: &[&str] = &["inspect.measure", "inspect.section", "inspect.interference", "inspect.center_of_mass", "inspect.draft"];
+
+const ADVANCED_VIEW: &[&str] = &["view.apply", "view.save", "view.navigate"];
+
+const ADVANCED_EXPRESSIONS: &[&str] = &["parameters.change", "config.table"];
+
 const PLASTIC_SETUP: &[&str] = &["plastic.manage_rules", "plastic.assign_rule"];
 
 const PLASTIC_CREATE: &[&str] = &[
@@ -96,6 +151,11 @@ const PLASTIC_CREATE: &[&str] = &[
 /// Panels of a tab, when this module lays the tab out.
 pub fn panels(tab: &str) -> Option<&'static [&'static str]> {
     match tab {
+        "HOME" => Some(&["FEATURE", "DATUM", "PATTERN"]),
+        "ASSEMBLY" => Some(&["COMPONENT", "JOINT"]),
+        "ANALYSIS" => Some(&["INSPECT"]),
+        "VIEW" => Some(&["VIEW"]),
+        "TOOLS" => Some(&["EXPRESSIONS"]),
         "SOLID" => Some(&["CREATE", "MODIFY", "ASSEMBLE", "CONFIGURE", "CONSTRUCT", "INSPECT", "INSERT", "SELECT"]),
         "PLASTIC" => Some(&["SETUP", "CREATE", "MODIFY", "ASSEMBLE", "CONSTRUCT", "INSPECT", "INSERT", "SELECT"]),
         _ => None,
@@ -120,6 +180,14 @@ pub fn layout<'a>(tab: &str, panel: &str, specs: &[&'a CommandSpec]) -> Option<(
             8,
             tab,
         ),
+        ("HOME", "FEATURE") => (ADVANCED_FEATURE, 7, tab),
+        ("HOME", "DATUM") => (ADVANCED_DATUM, 3, tab),
+        ("HOME", "PATTERN") => (ADVANCED_PATTERN, 3, tab),
+        ("ASSEMBLY", "COMPONENT") => (ADVANCED_COMPONENT, 2, tab),
+        ("ASSEMBLY", "JOINT") => (ADVANCED_JOINT, 3, tab),
+        ("ANALYSIS", "INSPECT") => (ADVANCED_INSPECT, 3, tab),
+        ("VIEW", "VIEW") => (ADVANCED_VIEW, 2, tab),
+        ("TOOLS", "EXPRESSIONS") => (ADVANCED_EXPRESSIONS, 2, tab),
         ("SOLID", "CONFIGURE") => (&["parameters.change", "config.table"], 2, tab),
         ("SKETCH", "PATTERN") => (&["sketch.mirror", "sketch.pattern.rectangular", "sketch.pattern.circular"], 3, tab),
         ("SOLID" | "SHEET METAL" | "PLASTIC", "ASSEMBLE") => (ASSEMBLE, 3, tab),

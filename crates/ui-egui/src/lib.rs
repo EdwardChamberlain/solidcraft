@@ -11,6 +11,8 @@
 pub mod access;
 #[cfg(test)]
 mod advanced_dialog_tests;
+#[cfg(test)]
+mod advanced_shell_tests;
 pub mod agent_chat;
 pub mod agent_cursor;
 pub mod browser;
@@ -706,7 +708,8 @@ impl SolveApp {
         if self.session.active_sketch.is_some() && self.ui.tab != "SKETCH" {
             self.ui.tab = "SKETCH".into();
         } else if self.session.active_sketch.is_none() && self.ui.tab == "SKETCH" {
-            self.ui.tab = "SOLID".into();
+            self.ui.tab =
+                if self.preferences.modelling_approach == prefs::ModellingApproach::Advanced { workspace::ADVANCED_TABS[0] } else { "SOLID" }.into();
             self.tool = None;
         }
         r

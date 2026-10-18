@@ -9,6 +9,8 @@
 #![forbid(unsafe_code)]
 
 pub mod access;
+#[cfg(test)]
+mod advanced_dialog_tests;
 pub mod agent_chat;
 pub mod agent_cursor;
 pub mod browser;
@@ -861,7 +863,8 @@ impl SolveApp {
             self.set_status(tools::hint(id), false);
             return;
         }
-        if let Some(d) = dialogs::Dialog::for_command(self, id) {
+        if let Some(mut d) = dialogs::Dialog::for_command(self, id) {
+            d.origin = Some(id.to_string());
             // The pre-selection now belongs to the dialog's inputs.
             if d.wants_picks() && !self.session.selection.is_empty() {
                 let _ = self.session.execute("select.clear", &json!({}));

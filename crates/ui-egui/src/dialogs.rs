@@ -334,6 +334,10 @@ pub struct Dialog {
     pub refused: Option<Refused>,
     /// Create Sketch opened by a sketch tool's shortcut: that tool starts once the sketch is open.
     pub then_start: Option<&'static str>,
+    /// The command this dialog was started for (Apply and Reset start it afresh).
+    pub origin: Option<String>,
+    /// Apply was pressed: once the feature is in, a fresh dialog for `origin` replaces this one.
+    pub reopen: bool,
 }
 
 /// OK computing off the window thread: the dialog's commands evaluated on a scratch copy of the
@@ -445,6 +449,8 @@ impl Dialog {
             extra: serde_json::Map::new(),
             refused: None,
             then_start: None,
+            origin: None,
+            reopen: false,
         }
     }
 
@@ -1471,6 +1477,25 @@ const LABEL_W: f32 = 92.0;
 /// The label column grows to fit its labels up to this, then long labels wrap.
 const LABEL_MAX_W: f32 = 150.0;
 
+/// A collapsible group's header row in the dialog grid (Advanced dialogs); the caller draws the
+/// group's rows only when this returns true. `open` is the state the first time it shows, and
+/// the choice is kept per group for the session.
+pub(crate) fn section(ui: &mut egui::Ui, id: &str, title: &str, open: bool) -> bool {
+    let key = egui::Id::new(("sc_dialog_group", id));
+    let mut now = ui.data_mut(|d| *d.get_temp_mut_or(key, open));
+    let arrow = if now { "▾" } else { "▸" };
+    let text = RichText::new(format!("{arrow} {}", tr(title))).strong().size(12.0);
+    let response = ui.add(egui::Label::new(text).selectable(false).sense(egui::Sense::click()));
+    crate::scenario::publish_handle(&format!("dialog:group:{id}"), response.rect.center());
+    if response.clicked() {
+        now = !now;
+        ui.data_mut(|d| d.insert_temp(key, now));
+    }
+    ui.label("");
+    ui.end_row();
+    now
+}
+
 /// A row label in the dialog's label column (the grid sizes the column to its widest label).
 pub(crate) fn row_label(ui: &mut egui::Ui, text: &str) {
     ROW.with(|r| *r.borrow_mut() = text.to_string());
@@ -2180,7 +2205,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let top = (vp.top() + crate::viewport::AXIS_VIEW_CLEARANCE).min((vp.bottom() - 360.0).max(vp.top()));
     // The Sketch Palette owns the right edge for as long as a sketch is being edited. A dialog
     // started there docks at the left instead, so neither panel hides the other.
-    let side = if crate::sketch_palette::editing(app) && crate::sketch_palette::fits_beside_a_dialog(app, ctx) {
+    let advanced = app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced;
+    let side = if advanced || crate::sketch_palette::editing(app) && crate::sketch_palette::fits_beside_a_dialog(app, ctx) {
         crate::frame::Side::Left
     } else {
         crate::frame::Side::Right
@@ -2194,6 +2220,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let mut ok = false;
     let mut applied = false;
     let mut cancel = false;
+    let mut reset = false;
     let mut enter = false;
     let wide = d.is_wide();
     let pattern_columns = matches!(d.kind, Kind::SketchModify(crate::sketch_modify_ui::Mod::PatternRect { .. }))
@@ -2210,6 +2237,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         Kind::SaveMesh(_) => crate::dialogs_save_mesh::ready(&d.inputs),
         _ => !has_ok || !d.previews() || (built.unwrap_or_else(|| apply_commands(app, &d).is_ok()) && app.preview.error.is_none()),
     };
+    // Advanced: Apply runs the command and starts the next one; Reset starts this one afresh.
+    let stepwise = advanced && has_ok && d.editing.is_none() && d.origin.is_some();
     let width = if wide { crate::frame::Width::Wide } else { crate::frame::Width::Normal };
     let wkey = egui::Id::new(("sc_dialog_w", wide));
     let response = crate::frame::docked_on(
@@ -2372,73 +2401,75 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                                 ui.end_row();
                             }
                         }
-                        row_label(ui, "Start");
-                        let old = if object_on(&d.inputs, FROM_OBJECT) { 2 } else { usize::from(!start.is_empty()) };
-                        let mut st = old;
-                        combo(ui, "ex_start", &["Profile Plane", "Offset", "From Object"], &mut st);
-                        if st != old {
-                            set_object(&mut d.inputs, &mut d.active, FROM_OBJECT, st == 2);
-                            if st == 1 && start.is_empty() {
-                                *start = "5 mm".into();
+                        if !advanced || section(ui, "extrude_limits", "Limits", true) {
+                            row_label(ui, "Start");
+                            let old = if object_on(&d.inputs, FROM_OBJECT) { 2 } else { usize::from(!start.is_empty()) };
+                            let mut st = old;
+                            combo(ui, "ex_start", &["Profile Plane", "Offset", "From Object"], &mut st);
+                            if st != old {
+                                set_object(&mut d.inputs, &mut d.active, FROM_OBJECT, st == 2);
+                                if st == 1 && start.is_empty() {
+                                    *start = "5 mm".into();
+                                }
+                                if st == 0 {
+                                    start.clear();
+                                }
                             }
-                            if st == 0 {
-                                start.clear();
-                            }
-                        }
-                        ui.end_row();
-                        if st != 0 {
-                            row_label(ui, "Offset");
-                            enter |= field(ui, start);
                             ui.end_row();
-                        }
-                        row_label(ui, "Direction");
-                        // One Side, Two Sides, Symmetric (a flip is a negative distance).
-                        let order = [0usize, TWO_SIDES, 2];
-                        let mut pos = order.iter().position(|o| o == direction).unwrap_or(0);
-                        combo(ui, "ex_dir", &["One Side", "Two Sides", "Symmetric"], &mut pos);
-                        if pos != order.iter().position(|o| o == direction).unwrap_or(0) {
-                            *direction = order.get(pos).copied().unwrap_or(0);
-                            // Selecting Symmetric applies the current total-distance semantics.
-                            d.extra.insert("convention".into(), json!(solidcraft_engine::doc::ExtrudeConvention::TotalDistance));
-                            // An explicit direction ends the automatic choices (#1257).
-                            smart.manual_dir = true;
-                            *auto_op = false;
-                        }
-                        ui.end_row();
-                        if *direction < 2 {
-                            row_label(ui, "Reverse");
-                            let mut reverse = *direction == 1;
-                            if ui.checkbox(&mut reverse, tr("Reverse Direction")).changed() {
-                                *direction = usize::from(reverse);
+                            if st != 0 {
+                                row_label(ui, "Offset");
+                                enter |= field(ui, start);
+                                ui.end_row();
+                            }
+                            row_label(ui, "Direction");
+                            // One Side, Two Sides, Symmetric (a flip is a negative distance).
+                            let order = [0usize, TWO_SIDES, 2];
+                            let mut pos = order.iter().position(|o| o == direction).unwrap_or(0);
+                            combo(ui, "ex_dir", &["One Side", "Two Sides", "Symmetric"], &mut pos);
+                            if pos != order.iter().position(|o| o == direction).unwrap_or(0) {
+                                *direction = order.get(pos).copied().unwrap_or(0);
+                                // Selecting Symmetric applies the current total-distance semantics.
+                                d.extra.insert("convention".into(), json!(solidcraft_engine::doc::ExtrudeConvention::TotalDistance));
                                 // An explicit direction ends the automatic choices (#1257).
                                 smart.manual_dir = true;
                                 *auto_op = false;
                             }
                             ui.end_row();
-                        }
-                        row_label(ui, "Extent Type");
-                        let cur = if to_object_on(&d.inputs) { 1 } else { usize::from(*all) * 2 };
-                        let mut ext = cur;
-                        combo(ui, "ex_ext", &["Distance", "To Object", "All"], &mut ext);
-                        *all = ext == 2;
-                        set_to_object(&mut d.inputs, &mut d.active, ext == 1);
-                        ui.end_row();
-                        if ext == 0 {
-                            row_label(ui, "Distance");
-                            enter |= field(ui, distance);
+                            if *direction < 2 {
+                                row_label(ui, "Reverse");
+                                let mut reverse = *direction == 1;
+                                if ui.checkbox(&mut reverse, tr("Reverse Direction")).changed() {
+                                    *direction = usize::from(reverse);
+                                    // An explicit direction ends the automatic choices (#1257).
+                                    smart.manual_dir = true;
+                                    *auto_op = false;
+                                }
+                                ui.end_row();
+                            }
+                            row_label(ui, "Extent Type");
+                            let cur = if to_object_on(&d.inputs) { 1 } else { usize::from(*all) * 2 };
+                            let mut ext = cur;
+                            combo(ui, "ex_ext", &["Distance", "To Object", "All"], &mut ext);
+                            *all = ext == 2;
+                            set_to_object(&mut d.inputs, &mut d.active, ext == 1);
                             ui.end_row();
-                            if *direction == TWO_SIDES {
-                                row_label(ui, "Distance 2");
-                                enter |= field(ui, distance2);
+                            if ext == 0 {
+                                row_label(ui, "Distance");
+                                enter |= field(ui, distance);
+                                ui.end_row();
+                                if *direction == TWO_SIDES {
+                                    row_label(ui, "Distance 2");
+                                    enter |= field(ui, distance2);
+                                    ui.end_row();
+                                }
+                            }
+                            if ext == 1 {
+                                row_label(ui, "To Offset");
+                                enter |= field(ui, to_offset);
                                 ui.end_row();
                             }
                         }
-                        if ext == 1 {
-                            row_label(ui, "To Offset");
-                            enter |= field(ui, to_offset);
-                            ui.end_row();
-                        }
-                        if *direction < 2 {
+                        if *direction < 2 && (!advanced || section(ui, "extrude_draft", "Draft", *taper_present)) {
                             row_label(ui, "Taper Angle");
                             let before = taper.clone();
                             enter |= field(ui, taper);
@@ -2447,14 +2478,16 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             }
                             ui.end_row();
                         }
-                        row_label(ui, "Operation");
-                        let before = *operation;
-                        combo(ui, "ex_op", &OP_LABELS, operation);
-                        // A choice made by hand sticks.
-                        if *operation != before {
-                            *auto_op = false;
+                        if !advanced || section(ui, "extrude_boolean", "Boolean", true) {
+                            row_label(ui, "Operation");
+                            let before = *operation;
+                            combo(ui, "ex_op", &OP_LABELS, operation);
+                            // A choice made by hand sticks.
+                            if *operation != before {
+                                *auto_op = false;
+                            }
+                            ui.end_row();
                         }
-                        ui.end_row();
                     }
                     Kind::Revolve { angle, operation, .. } => {
                         row_label(ui, "Type");
@@ -3058,7 +3091,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 (galley.size().x + 2.0 * ui.spacing().button_padding.x).max(64.0)
             };
             let (ok_width, close_width) = (button_width(label), button_width(close));
-            let buttons = close_width + if has_ok { ok_width + ui.spacing().item_spacing.x } else { 0.0 };
+            let (apply_label, reset_label) = (tr("Apply"), tr("Reset"));
+            let (apply_width, reset_width) = (button_width(apply_label), button_width(reset_label));
+            let extra = if stepwise { apply_width + reset_width + 2.0 * ui.spacing().item_spacing.x } else { 0.0 };
+            let buttons = close_width + extra + if has_ok { ok_width + ui.spacing().item_spacing.x } else { 0.0 };
             crate::frame::right_aligned(ui, total, buttons, |ui| {
                 if has_ok {
                     let b = egui::Button::new(RichText::new(label).color(if valid { Color32::WHITE } else { t.text_dim }))
@@ -3069,6 +3105,22 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     crate::scenario::publish_handle(&format!("dialog:{raw_label}"), r.rect.center());
                     if r.clicked() {
                         ok = true;
+                    }
+                }
+                if stepwise {
+                    let r = ui.add_enabled(
+                        valid && app.applying.is_none(),
+                        egui::Button::new(apply_label).wrap_mode(egui::TextWrapMode::Extend).min_size(vec2(apply_width, 24.0)),
+                    );
+                    crate::scenario::publish_handle("dialog:Apply", r.rect.center());
+                    if r.clicked() {
+                        ok = true;
+                        d.reopen = true;
+                    }
+                    let r = ui.add(egui::Button::new(reset_label).wrap_mode(egui::TextWrapMode::Extend).min_size(vec2(reset_width, 24.0)));
+                    crate::scenario::publish_handle("dialog:Reset", r.rect.center());
+                    if r.clicked() {
+                        reset = true;
                     }
                 }
                 if ui.add(egui::Button::new(close).wrap_mode(egui::TextWrapMode::Extend).min_size(vec2(close_width, 24.0))).clicked() {
@@ -3150,6 +3202,25 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 Err(e) => d.refuse(app, e),
             },
         }
+    }
+    // Apply (Advanced): the feature is in; the next one starts from the same command. OK and
+    // Cancel never reach here with `reopen` set, so they close the dialog as before.
+    if applied && d.reopen {
+        let fresh = d.origin.clone().and_then(|id| Dialog::for_command(app, &id).map(|nd| (id, nd)));
+        if let Some((id, mut nd)) = fresh {
+            nd.origin = Some(id);
+            d = nd;
+            cancel = false;
+            applied = false;
+        }
+    }
+    if reset
+        && let Some(id) = d.origin.clone()
+        && let Some(mut nd) = Dialog::for_command(app, &id)
+    {
+        nd.origin = Some(id);
+        d = nd;
+        app.applying = None;
     }
     // Cancel while computing: the result goes (its worker runs on to its end).
     if cancel && !applied {

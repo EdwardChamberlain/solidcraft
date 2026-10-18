@@ -136,6 +136,42 @@ pub fn switch(app: &mut SolveApp, i: usize) {
         *s = Some(out);
     }
     app.docs.active = i;
+    live_update(app);
+}
+
+/// The open designs that have a file, as linked parts see them (`workspace::with_open_designs`).
+pub fn open_designs(app: &SolveApp) -> Vec<(String, std::sync::Arc<solidcraft_engine::doc::Document>)> {
+    let (sessions, _) = open_sessions(&app.docs, &app.session);
+    sessions.into_iter().filter_map(|s| s.path.clone().map(|path| (path, s.doc.clone()))).collect()
+}
+
+/// Run `f` with the open designs standing in for their files, so a part open in another tab is
+/// read as it is now.
+pub fn with_open<R>(app: &mut SolveApp, f: impl FnOnce(&mut SolveApp) -> R) -> R {
+    let open = open_designs(app);
+    solidcraft_engine::workspace::with_open_designs(open, || f(app))
+}
+
+/// Bring the linked parts of the design on show up to date from the designs open in the other
+/// tabs (edits not yet saved included). Quiet when nothing changed or a part can't be read: the
+/// design keeps the bodies it has. Returns how many parts changed.
+pub fn live_update(app: &mut SolveApp) -> usize {
+    // Classic keeps a link as it is until Update Links says otherwise.
+    if app.preferences.modelling_approach != crate::prefs::ModellingApproach::Advanced || app.session.doc.links.is_empty() {
+        return 0;
+    }
+    let updated = with_open(app, |app| {
+        app.session
+            .execute("component.update_links", &json!({}))
+            .ok()
+            .and_then(|v| v.get("updated").and_then(Value::as_array).map(Vec::len))
+            .unwrap_or(0)
+    });
+    if updated > 0 {
+        let text = crate::i18n::format("ui.parts_updated", &[("count", &updated.to_string())]);
+        app.set_status(text, false);
+    }
+    updated
 }
 
 /// Open `session` in a new tab after the active one and switch to it (`fit`: frame its model).
@@ -388,10 +424,13 @@ pub fn save_all(app: &mut SolveApp) -> SavedAll {
         }
     };
     if out.saved > 0 {
-        refresh(&mut app.session);
-        for slot in app.docs.slots.iter_mut().flatten() {
-            refresh(&mut slot.session);
-        }
+        let open = open_designs(app);
+        solidcraft_engine::workspace::with_open_designs(open, || {
+            refresh(&mut app.session);
+            for slot in app.docs.slots.iter_mut().flatten() {
+                refresh(&mut slot.session);
+            }
+        });
     }
     out
 }

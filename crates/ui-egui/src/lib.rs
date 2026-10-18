@@ -1018,7 +1018,7 @@ impl SolveApp {
             self.set_status(self.tr_label("Switched to this design's modelling approach").to_string(), false);
         }
         if wanted == prefs::ModellingApproach::Advanced && !self.session.doc.links.is_empty() {
-            match self.session.execute("component.update_links", &json!({})) {
+            match documents::with_open(self, |app| app.session.execute("component.update_links", &json!({}))) {
                 Ok(v) => {
                     let updated = v.get("updated").and_then(Value::as_array).map_or(0, Vec::len);
                     if updated > 0 {

@@ -47,6 +47,10 @@ fn base_dir(path: Option<&str>) -> Option<PathBuf> {
 }
 
 /// A path as given, made absolute when the platform can, with `.` and `..` worked out.
+pub(crate) fn normalized(p: &Path) -> PathBuf {
+    absolute(p)
+}
+
 fn absolute(p: &Path) -> PathBuf {
     let full = std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf());
     let mut out = PathBuf::new();
@@ -109,6 +113,10 @@ pub(super) fn rebased(doc: &Document, from: Option<&str>, to: &str) -> std::coll
 
 /// Reads the design at `file`.
 fn read_design_at(file: &Path) -> Result<Document> {
+    // A part open in another tab counts as it is now, not as it was saved.
+    if let Some(open) = crate::workspace::open_design(file) {
+        return Ok(open);
+    }
     let shown = file.display().to_string();
     let bytes = solidcraft_io::vfs::read(&shown, solidcraft_io::MAX_DESIGN_BYTES).map_err(|e| EngineError::Other(format!("{shown}: {e}")))?;
     solidcraft_io::read_design(&bytes).map_err(|e| EngineError::Other(format!("{shown}: {e}")))
@@ -639,6 +647,32 @@ mod tests {
         std::fs::remove_file(&leaf).unwrap();
         assert_eq!(referenced_files(&top.to_string_lossy()).unwrap().len(), 2);
         assert!(referenced_files(&dir.join("nothing.solidcraft").to_string_lossy()).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_part_open_in_the_window_reaches_its_assembly_before_it_is_saved() {
+        let dir = temp_dir("open-part");
+        let (part_file, case_file) = (dir.join("plate.solidcraft"), dir.join("case.solidcraft"));
+        save_box(&part_file, 30.0);
+        let mut case = Session::default();
+        run(&mut case, "component.insert_design", json!({"path": part_file}));
+        run(&mut case, "file.save", json!({"path": case_file}));
+        // The part is open and changed, not saved.
+        let mut part = Session::default();
+        run(&mut part, "doc.open", json!({"path": part_file}));
+        run(&mut part, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Extra", "corner": [50, 0, 0]}));
+        assert!(part.is_dirty());
+        // With nothing registered the file is read, and it has not changed.
+        assert_eq!(run(&mut case, "component.update_links", json!({}))["unchanged"], json!(["plate"]));
+        // With the part registered as open, its current state is what the assembly takes.
+        let open = vec![(part_file.to_string_lossy().into_owned(), part.doc.clone())];
+        let r = crate::workspace::with_open_designs(open, || run(&mut case, "component.update_links", json!({})));
+        assert_eq!(r["updated"], json!(["plate"]));
+        assert!((volume(&mut case) - 7000.0).abs() < 1e-6, "{}", volume(&mut case));
+        // The registration ended with the call: the file is read again, and the saved part wins.
+        assert_eq!(run(&mut case, "component.update_links", json!({}))["updated"], json!(["plate"]));
+        assert!((volume(&mut case) - 6000.0).abs() < 1e-6);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

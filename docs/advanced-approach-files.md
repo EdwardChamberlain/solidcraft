@@ -43,30 +43,42 @@ A component of a part can be linked to another part file (`component.insert_desi
   with a 10 mm "Placeholder" box; delete it after modelling the part.
 - Break Link keeps the bodies and forgets the file.
 
+## Open parts, the file store and recovery
+
+- **Open designs stand in for their files** (`workspace::with_open_designs`). A part that is open
+  in another tab is read as it is now, unsaved edits included, wherever a link reads a part:
+  switching to an assembly's tab, Update parts, Save All and opening a design all bring its
+  parts up to date from the tabs first. The desktop app does this in the Advanced approach only;
+  Classic keeps a link as it is until Update Links is asked for. Without a host (the CLI, a
+  script) nothing is registered and the files are read.
+- **Files go through a `DesignStore`** (`solidcraft_io::vfs`): the disk, or the browser's files,
+  unless a host installs its own (`with_store` on a thread, `set_default_store` for all), such as a
+  PDM backend. Linking, opening and saving all work through it.
+- **`referenced_files(path)`** lists every part below a design, for a host that must fetch files
+  before a command can read them (the browser): fetch what it lists, then open the design.
+- **Autosave keeps every open design** with unsaved changes (one entry each, one lock for the app),
+  and closing the app keeps what is unsaved. A crash report carries the design; the linked
+  parts' bodies are inside it, so replaying it needs no part file.
+
 ## What a reference does not do yet
 
-These are the known limits of the exact-copy link, in the order they are likely to matter:
-
-1. **The link is a copy that is refreshed, not a live view.** Editing a part updates the designs
-   above it on **Update Links** (and on open, in the desktop app), not as the part is edited.
-2. **Persistent names stop at the file boundary.** The linked bodies' faces are imported faces:
-   a feature of the linking design that refers to one (a joint origin on a face, a fillet) holds
-   its position, not the part's own face name, so a part that changes shape can move it.
-3. **Joints refer to a single occurrence**, not a full path of occurrences
-   (ROADMAP.md, "Exact full-path assembly joint editing").
-4. **A part that uses another's geometry** (a feature of one file consuming a body of another) is
+1. **The link is an exact copy, refreshed from the part**, not the part's own evaluation. The linked
+   bodies are imported faces: a feature of the linking design that refers to one (a joint origin
+   on a face, a fillet) holds its position, not the part's own face name, so a part that changes
+   shape can move it. Following the part's faces needs the part's persistent names to cross the
+   file boundary.
+2. **Joints refer to one occurrence, not a path of occurrences** (ROADMAP.md, "Exact full-path
+   assembly joint editing"). A linked part is a component of its own with its bodies flattened into
+   one Import, so a part used twice is two components and a joint is never ambiguous; the
+   limit applies to components kept inside a file.
+3. **A part that uses another's geometry** (a feature of one file consuming a body of another) is
    not supported. A part's own recipe depends only on itself.
-5. **No per-component configuration.** Configurations apply to the whole design.
-6. **One design per session.** Every open file is a full `Session`; there is no shared
-   workspace yet, so a part open in another tab and the same part linked into an assembly are two
-   separate evaluations, and an edit shows up in the other after saving and updating.
-7. **File access** is `solidcraft_io::vfs`, a module of functions (disk natively, a pre-filled
-   map in the browser). Opening in two phases on the web (read the references, let the host fetch
-   them, then evaluate) and a store that a PDM system can implement need it to become a trait.
-8. **Recovery and crash reports** still cover one design: background tabs are not autosaved.
-
-Each of these is a separate piece of engine work; none changes the file format already written
-here, except the first two, which would add what a live reference stores.
+4. **No per-component configuration.** Configurations apply to the whole design.
+5. **One design per session.** The open designs are registered for linking, but each is still its
+   own `Session`, with its own undo; an edit in one tab reaches another when that tab is shown (or
+   on an update), not while both are being edited.
+6. **The browser host does not fetch before opening yet.** `referenced_files` is there; the web
+   app does not call it.
 
 ## Format
 

@@ -52,6 +52,8 @@ fn the_advanced_ribbon_shows_its_tabs_and_classic_keeps_its_own() {
 fn advanced() -> Harness {
     let mut h = Harness::new();
     h.app.preferences.modelling_approach = ModellingApproach::Advanced;
+    // A design made in this approach records it (File > New does this for the real app).
+    h.app.session.doc_mut().approach = solidcraft_engine::doc::Approach::Advanced;
     h.frames(3);
     h
 }
@@ -204,5 +206,52 @@ fn autosave_keeps_every_open_design_with_unsaved_changes_not_only_the_one_shown(
     // Closing the app with both unsaved keeps both for the next launch.
     crate::recovery_ui::close(&mut h.app);
     assert_eq!(solidcraft_engine::recovery::orphans(&dir.join("recovery")).len(), 2);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn switching_to_an_assembly_shows_the_part_open_in_another_tab_as_it_is_now() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-live-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = advanced();
+    h.app.run("file.save", json!({"path": dir.join("case.solidcraft")})).unwrap();
+    h.app.run("component.new_part", json!({"name": "Lid"})).unwrap();
+    h.app.run("file.save", json!({})).unwrap();
+    let volume = |h: &mut Harness| h.app.session.execute("inspect.measure", &json!({})).unwrap()["total"]["volume_mm3"].as_f64().unwrap();
+    assert!((volume(&mut h) - 1000.0).abs() < 1e-6);
+    // The part in its own tab gets a second body; it is NOT saved.
+    h.app.open_path(&dir.join("Lid.solidcraft").display().to_string());
+    h.frames(2);
+    h.app.run("solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Extra", "corner": [50, 0, 0]})).unwrap();
+    assert!(h.app.session.is_dirty());
+    // Back to the assembly: it already has the part's new body.
+    crate::documents::switch(&mut h.app, 0);
+    h.frames(2);
+    assert_eq!(h.app.session.doc.name, "case");
+    assert!((volume(&mut h) - 2000.0).abs() < 1e-6, "{}", volume(&mut h));
+    // The part's file is untouched.
+    let mut on_disk = solidcraft_engine::Session::default();
+    on_disk.execute("doc.open", &json!({"path": dir.join("Lid.solidcraft")})).unwrap();
+    assert_eq!(on_disk.doc.features.len(), 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn classic_keeps_a_link_until_update_links_is_asked() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-live-classic-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = Harness::new();
+    h.app.run("file.save", json!({"path": dir.join("case.solidcraft")})).unwrap();
+    h.app.run("component.new_part", json!({"name": "Lid"})).unwrap();
+    h.app.run("file.save", json!({})).unwrap();
+    h.app.open_path(&dir.join("Lid.solidcraft").display().to_string());
+    h.frames(2);
+    h.app.run("solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Extra", "corner": [50, 0, 0]})).unwrap();
+    crate::documents::switch(&mut h.app, 0);
+    h.frames(2);
+    let volume = h.app.session.execute("inspect.measure", &json!({})).unwrap()["total"]["volume_mm3"].as_f64().unwrap();
+    assert!((volume - 1000.0).abs() < 1e-6, "Classic did not update on its own: {volume}");
     let _ = std::fs::remove_dir_all(&dir);
 }

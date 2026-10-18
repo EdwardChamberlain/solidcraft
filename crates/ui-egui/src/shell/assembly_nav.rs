@@ -85,7 +85,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 let update = ui.add_enabled(!app.session.doc.links.is_empty(), egui::Button::new(app.tr("ui.update_parts")));
                 crate::scenario::publish_rect("assembly_nav:update", update.rect);
                 if update.clicked() {
-                    match app.run("component.update_links", json!({})) {
+                    match crate::documents::with_open(app, |app| app.run("component.update_links", json!({}))) {
                         Ok(v) => {
                             let n = v.get("updated").and_then(|u| u.as_array()).map_or(0, Vec::len);
                             app.set_status(crate::i18n::format("ui.parts_updated", &[("count", &n.to_string())]), false);

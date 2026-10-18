@@ -24,6 +24,7 @@ mod slicer_icon;
 pub mod slicers;
 pub mod timing;
 pub mod view;
+pub mod workspace;
 
 use std::sync::Arc;
 

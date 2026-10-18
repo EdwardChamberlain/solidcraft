@@ -117,3 +117,41 @@ fn a_planar_face_is_a_direction_in_advanced_and_not_in_classic() {
     assert_eq!(cmd, "solid.pattern.rectangular");
     assert!((p["dir1"][2].as_f64().unwrap() - 1.0).abs() < 1e-9, "{p}");
 }
+
+#[test]
+fn a_middle_click_moves_to_the_next_pick_then_confirms_in_advanced_only() {
+    use solidcraft_engine::Sel;
+    let mut h = Harness::new();
+    h.app.preferences.modelling_approach = ModellingApproach::Advanced;
+    extruded(&mut h);
+    let before = features(&h);
+    h.app.start("construct.plane.midplane");
+    h.frames(3);
+    // Nothing picked: the click moves on to the first empty pick and creates nothing.
+    h.middle_click();
+    h.frames(2);
+    assert_eq!(features(&h), before);
+    let mut d = h.app.dialog.take().expect("still open");
+    d.inputs[0].items = vec![Sel::Plane { name: "XY".into() }];
+    d.inputs[1].items = vec![Sel::Plane { name: "XZ".into() }];
+    h.app.dialog = Some(d);
+    h.frames(3);
+    h.middle_click();
+    h.frames(4);
+    assert!(h.app.dialog.is_none(), "every pick made: the click confirmed");
+    assert_eq!(features(&h), before + 1);
+
+    // Classic ignores it.
+    let mut c = Harness::new();
+    extruded(&mut c);
+    c.app.start("construct.plane.midplane");
+    c.frames(3);
+    let mut d = c.app.dialog.take().unwrap();
+    d.inputs[0].items = vec![Sel::Plane { name: "XY".into() }];
+    d.inputs[1].items = vec![Sel::Plane { name: "XZ".into() }];
+    c.app.dialog = Some(d);
+    c.frames(3);
+    c.middle_click();
+    c.frames(3);
+    assert!(c.app.dialog.is_some(), "Classic does not take a middle click as OK");
+}

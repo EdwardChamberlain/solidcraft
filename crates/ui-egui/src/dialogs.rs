@@ -2357,6 +2357,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 }
                 if matches!(&d.kind, Kind::SketchModify(k) if k.previews())
                     || matches!(d.kind, Kind::Mirror | Kind::PatternRect { .. } | Kind::PatternCirc { .. } | Kind::PathPattern { .. })
+                    || (advanced && d.inputs.len() > 1 && d.editing.is_none())
                 {
                     row_label(ui, "dialog.step");
                     let label = d.active_input().map(|input| tr(input.label)).unwrap_or_else(|| tr("Objects"));
@@ -2519,50 +2520,54 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         }
                     }
                     Kind::Revolve { angle, operation, .. } => {
-                        row_label(ui, "Type");
-                        let cur = usize::from(to_object_on(&d.inputs));
-                        let mut ty = cur;
-                        combo(ui, "rv_type", &["Angle", "To Object"], &mut ty);
-                        set_to_object(&mut d.inputs, &mut d.active, ty == 1);
-                        ui.end_row();
-                        if ty == 0 {
-                            // One Side, Two Sides (a second angle), Symmetric (the angle split).
-                            row_label(ui, "Direction");
-                            let cur = if d.extra.contains_key("angle2") {
-                                1
-                            } else if d.extra.get("direction").is_some() {
-                                2
-                            } else {
-                                0
-                            };
-                            let mut dir = cur;
-                            combo(ui, "rv_dir", &["One Side", "Two Sides", "Symmetric"], &mut dir);
-                            if dir != cur {
-                                d.extra.remove("angle2");
-                                d.extra.remove("direction");
-                                match dir {
-                                    1 => {
-                                        d.extra.insert("angle2".into(), json!("90 deg"));
+                        if !advanced || section(ui, "revolve_limits", "Limits", true) {
+                            row_label(ui, "Type");
+                            let cur = usize::from(to_object_on(&d.inputs));
+                            let mut ty = cur;
+                            combo(ui, "rv_type", &["Angle", "To Object"], &mut ty);
+                            set_to_object(&mut d.inputs, &mut d.active, ty == 1);
+                            ui.end_row();
+                            if ty == 0 {
+                                // One Side, Two Sides (a second angle), Symmetric (the angle split).
+                                row_label(ui, "Direction");
+                                let cur = if d.extra.contains_key("angle2") {
+                                    1
+                                } else if d.extra.get("direction").is_some() {
+                                    2
+                                } else {
+                                    0
+                                };
+                                let mut dir = cur;
+                                combo(ui, "rv_dir", &["One Side", "Two Sides", "Symmetric"], &mut dir);
+                                if dir != cur {
+                                    d.extra.remove("angle2");
+                                    d.extra.remove("direction");
+                                    match dir {
+                                        1 => {
+                                            d.extra.insert("angle2".into(), json!("90 deg"));
+                                        }
+                                        2 => {
+                                            d.extra.insert("direction".into(), json!("symmetric"));
+                                        }
+                                        _ => {}
                                     }
-                                    2 => {
-                                        d.extra.insert("direction".into(), json!("symmetric"));
-                                    }
-                                    _ => {}
+                                }
+                                ui.end_row();
+                                row_label(ui, "Angle");
+                                enter |= field(ui, angle);
+                                ui.end_row();
+                                if dir == 1 {
+                                    row_label(ui, "Angle 2");
+                                    enter |= extra_field(ui, &mut d.extra, "angle2", "90 deg");
+                                    ui.end_row();
                                 }
                             }
-                            ui.end_row();
-                            row_label(ui, "Angle");
-                            enter |= field(ui, angle);
-                            ui.end_row();
-                            if dir == 1 {
-                                row_label(ui, "Angle 2");
-                                enter |= extra_field(ui, &mut d.extra, "angle2", "90 deg");
-                                ui.end_row();
-                            }
                         }
-                        row_label(ui, "Operation");
-                        combo(ui, "rv_op", &OP_LABELS, operation);
-                        ui.end_row();
+                        if !advanced || section(ui, "revolve_boolean", "Boolean", true) {
+                            row_label(ui, "Operation");
+                            combo(ui, "rv_op", &OP_LABELS, operation);
+                            ui.end_row();
+                        }
                     }
                     Kind::Fillet { radius, chamfer, chain, ctype, distance2, angle, flip } => {
                         if *chamfer {
@@ -3179,6 +3184,21 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let report_active = app.issue_report.draft.is_some();
     if !report_active && enter_applies && app.applying.is_none() && (enter || canvas_enter || (enter_free && nothing_focused)) {
         ok = true;
+    }
+    // Advanced: a middle click (not a drag) goes to the next pick that is still empty, and
+    // confirms once every pick is made.
+    if advanced
+        && !report_active
+        && app.applying.is_none()
+        && has_ok
+        && !matches!(d.kind, Kind::Params { .. } | Kind::Measure { .. } | Kind::Sketch)
+        && ctx.input(|i| i.pointer.button_clicked(egui::PointerButton::Middle))
+    {
+        match d.inputs.iter().position(|i| i.items.is_empty()) {
+            Some(next) => d.active = next,
+            None if valid => ok = true,
+            None => {}
+        }
     }
     if !report_active && esc && !app.esc_handled {
         app.esc_handled = true;

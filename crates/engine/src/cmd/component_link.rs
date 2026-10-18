@@ -140,6 +140,32 @@ fn reaches(file: &Path, target: &Path) -> bool {
     walk(file, &absolute(target), 0, &mut std::collections::BTreeSet::new())
 }
 
+/// Every part file the design at `path` links, directly or through the parts it links, as the
+/// files themselves (absolute). A host that fetches files before a command can read them (the
+/// browser) asks this first, fetches what it lists, and only then opens the design. The design
+/// itself must be readable; a part that is not is listed and its own links are not followed.
+pub fn referenced_files(path: &str) -> Result<Vec<String>> {
+    let root = absolute(Path::new(path));
+    read_design_at(&root)?;
+    let (mut out, mut seen, mut queue) = (Vec::new(), std::collections::BTreeSet::new(), vec![root]);
+    while let Some(file) = queue.pop() {
+        if !seen.insert(file.clone()) || seen.len() > REACH_FILES {
+            continue;
+        }
+        let Ok(doc) = read_design_at(&file) else { continue };
+        let own = file.to_string_lossy().into_owned();
+        for link in doc.links.values() {
+            let linked = absolute(&resolve(Some(&own), &link.path));
+            let shown = linked.to_string_lossy().into_owned();
+            if !out.contains(&shown) {
+                out.push(shown);
+                queue.push(linked);
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// The solid bodies of the design at `file`, evaluated, as an Import feature: its name, its
 /// identity and the feature.
 fn linked_bodies(file: &Path, own: Option<&str>) -> Result<(String, String, solidcraft_io::StepFeature)> {
@@ -242,7 +268,7 @@ fn new_part(s: &mut Session, p: &Value) -> Result<Value> {
     if file.extension().is_none_or(|e| !e.eq_ignore_ascii_case("solidcraft")) {
         return Err(bad(cmd, "`path` must end in .solidcraft"));
     }
-    if solidcraft_io::vfs::read(&shown, 1).is_ok() || file.exists() {
+    if solidcraft_io::vfs::exists(&shown) {
         return Err(bad(cmd, format!("{shown} exists already; give another name or use component.insert_design")));
     }
     // The new part: an empty design of the same approach, with a body so it can be linked at
@@ -332,7 +358,7 @@ fn list_links(s: &mut Session, _p: &Value) -> Result<Value> {
         .map(|(c, l)| {
             let file = resolve(s.path.as_deref(), &l.path);
             let name = s.doc.components.iter().find(|x| x.id == *c).map(|x| x.name.clone());
-            json!({"component": c, "name": name, "path": l.path, "file": file.display().to_string(), "found": file.is_file()})
+            json!({"component": c, "name": name, "path": l.path, "file": file.display().to_string(), "found": solidcraft_io::vfs::exists(&file.display().to_string())})
         })
         .collect();
     Ok(json!({"links": links}))
@@ -534,6 +560,85 @@ mod tests {
         let r = run(&mut s, "component.update_links", json!({}));
         let warnings = r["warnings"].to_string();
         assert!(warnings.contains("different design"), "{warnings}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A store that keeps files in memory, as a PDM or database backend would.
+    #[derive(Default)]
+    struct MemoryStore(std::sync::Mutex<std::collections::BTreeMap<String, Vec<u8>>>);
+
+    impl solidcraft_io::vfs::DesignStore for MemoryStore {
+        fn read(&self, path: &str, max: usize) -> std::io::Result<Vec<u8>> {
+            let bytes = self.0.lock().unwrap().get(path).cloned().ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))?;
+            if bytes.len() > max { Err(std::io::Error::from(std::io::ErrorKind::InvalidData)) } else { Ok(bytes) }
+        }
+        fn write(&self, path: &str, bytes: &[u8]) -> std::io::Result<()> {
+            self.0.lock().unwrap().insert(path.to_string(), bytes.to_vec());
+            Ok(())
+        }
+        fn len(&self, path: &str) -> std::io::Result<u64> {
+            self.0.lock().unwrap().get(path).map(|b| b.len() as u64).ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))
+        }
+        fn exists(&self, path: &str) -> bool {
+            self.0.lock().unwrap().contains_key(path)
+        }
+        fn remove(&self, path: &str) -> std::io::Result<()> {
+            self.0.lock().unwrap().remove(path).map(|_| ()).ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))
+        }
+        fn create_dir_all(&self, _path: &str) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn parts_link_save_open_and_update_through_an_installed_store_without_touching_the_disk() {
+        let store = std::sync::Arc::new(MemoryStore::default());
+        let root = std::env::temp_dir().join(format!("solidcraft-store-{}-never-created", std::process::id()));
+        let (case, lid) = (root.join("case.solidcraft"), root.join("Lid.solidcraft"));
+        solidcraft_io::vfs::with_store(store.clone(), || {
+            let mut s = Session::default();
+            run(&mut s, "file.save", json!({"path": case}));
+            run(&mut s, "component.new_part", json!({"name": "Lid"}));
+            run(&mut s, "file.save", json!({}));
+            assert!(solidcraft_io::vfs::exists(&lid.to_string_lossy()));
+            assert_eq!(run(&mut s, "component.links", json!({}))["links"][0]["found"], true);
+            // The part is opened and changed through the same store; the assembly updates from it.
+            let mut part = Session::default();
+            run(&mut part, "doc.open", json!({"path": lid}));
+            run(&mut part, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Extra", "corner": [50, 0, 0]}));
+            run(&mut part, "file.save", json!({}));
+            assert_eq!(run(&mut s, "component.update_links", json!({}))["updated"], json!(["Lid"]));
+            assert!((volume(&mut s) - 2000.0).abs() < 1e-6);
+            // A third session opens the assembly from the store.
+            let mut again = Session::default();
+            run(&mut again, "doc.open", json!({"path": case}));
+            assert_eq!(again.doc.links.len(), 1);
+        });
+        assert!(store.0.lock().unwrap().len() >= 2);
+        assert!(!root.exists(), "nothing was written to the disk");
+        // Outside the store's scope the disk answers again.
+        assert!(!solidcraft_io::vfs::exists(&lid.to_string_lossy()));
+    }
+
+    #[test]
+    fn referenced_files_lists_every_part_below_a_design_for_a_host_that_fetches_first() {
+        let dir = temp_dir("references");
+        let (leaf, mid, top) = (dir.join("leaf.solidcraft"), dir.join("mid.solidcraft"), dir.join("top.solidcraft"));
+        save_box(&leaf, 30.0);
+        let mut m = Session::default();
+        run(&mut m, "component.insert_design", json!({"path": leaf}));
+        run(&mut m, "file.save", json!({"path": mid}));
+        let mut t = Session::default();
+        run(&mut t, "component.insert_design", json!({"path": mid}));
+        run(&mut t, "file.save", json!({"path": top}));
+        let listed = referenced_files(&top.to_string_lossy()).unwrap();
+        let names: Vec<_> = listed.iter().map(|p| Path::new(p).file_name().unwrap().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, ["mid.solidcraft", "leaf.solidcraft"], "{listed:?}");
+        assert!(referenced_files(&leaf.to_string_lossy()).unwrap().is_empty());
+        // A part that is gone is still listed (the host may be able to fetch it); the design must exist.
+        std::fs::remove_file(&leaf).unwrap();
+        assert_eq!(referenced_files(&top.to_string_lossy()).unwrap().len(), 2);
+        assert!(referenced_files(&dir.join("nothing.solidcraft").to_string_lossy()).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -186,3 +186,23 @@ fn save_all_writes_every_open_design_and_brings_assemblies_up_to_date() {
     assert_eq!(crate::documents::save_all(&mut h.app).saved, 0);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn autosave_keeps_every_open_design_with_unsaved_changes_not_only_the_one_shown() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-tabs-autosave-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut h = advanced();
+    crate::recovery_ui::start(&mut h.app, &dir.join("recovery"), std::time::Duration::ZERO);
+    h.app.run("solid.box", json!({"length": 10, "width": 10, "height": 10})).unwrap();
+    crate::documents::new_tab(&mut h.app);
+    h.frames(2);
+    h.app.run("solid.box", json!({"length": 5, "width": 5, "height": 5})).unwrap();
+    assert_eq!(h.app.docs.count(), 2);
+    crate::recovery_ui::tick(&mut h.app);
+    let entries = std::fs::read_dir(dir.join("recovery")).unwrap().flatten().filter(|e| e.path().extension().is_some_and(|x| x == "json")).count();
+    assert_eq!(entries, 2, "both tabs are autosaved");
+    // Closing the app with both unsaved keeps both for the next launch.
+    crate::recovery_ui::close(&mut h.app);
+    assert_eq!(solidcraft_engine::recovery::orphans(&dir.join("recovery")).len(), 2);
+    let _ = std::fs::remove_dir_all(&dir);
+}

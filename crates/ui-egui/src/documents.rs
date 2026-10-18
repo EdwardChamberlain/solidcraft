@@ -336,6 +336,16 @@ pub fn tabs_info(app: &SolveApp) -> Vec<(String, bool)> {
         .collect()
 }
 
+/// The open designs in tab order, and the position of the one the window shows (autosave keeps
+/// an entry for each design with unsaved changes, not only that one).
+pub fn open_sessions<'a>(docs: &'a Documents, active_session: &'a Session) -> (Vec<&'a Session>, usize) {
+    if docs.slots.is_empty() {
+        return (vec![active_session], 0);
+    }
+    let sessions = docs.slots.iter().map(|slot| slot.as_ref().map_or(active_session, |s| &s.session)).collect();
+    (sessions, docs.active)
+}
+
 /// What Save All did.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SavedAll {

@@ -37,7 +37,9 @@ pub fn rows(app: &SolveApp) -> Vec<Row> {
             Some(dir) if given.is_relative() => dir.join(given),
             _ => given.to_path_buf(),
         };
-        Some((link.path.clone(), file.display().to_string(), file.is_file()))
+        let shown = file.display().to_string();
+        let found = solidcraft_engine::io::vfs::exists(&shown);
+        Some((link.path.clone(), shown, found))
     };
     // Depth first, each component before its own children, siblings in file order. Bounded, as a
     // design file is hostile input: a parent cycle can't loop it.

@@ -36,6 +36,7 @@ mod features;
 mod features_more;
 pub use features::{auto_operation, extrude_reach};
 mod component_link;
+pub use component_link::referenced_files;
 mod config;
 mod file;
 mod inspect;

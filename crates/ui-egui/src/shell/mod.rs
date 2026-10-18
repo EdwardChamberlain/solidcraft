@@ -6,6 +6,7 @@
 
 pub mod advanced;
 pub mod classic;
+pub mod part_nav;
 
 use crate::SolveApp;
 use crate::prefs::ModellingApproach;

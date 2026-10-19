@@ -4613,6 +4613,9 @@ pub(crate) fn sheet_face_plane_in_frame(doc: &Document, st: &ModelState, comp: u
         PlaneRef::Flipped { base, about_y } => {
             PlaneRef::Flipped { base: Box::new(sheet_face_plane_in_frame(doc, st, comp, base)?), about_y: *about_y }
         }
+        PlaneRef::Reframed { base, origin, x_dir } => {
+            PlaneRef::Reframed { base: Box::new(sheet_face_plane_in_frame(doc, st, comp, base)?), origin: *origin, x_dir: *x_dir }
+        }
         other => other.clone(),
     })
 }
@@ -5546,7 +5549,9 @@ fn construction_state<'a>(doc: &Document, st: &'a ModelState, comp: u64) -> std:
 fn plane_is_fixed(plane: &PlaneRef) -> bool {
     match plane {
         PlaneRef::Origin { .. } | PlaneRef::Custom { .. } | PlaneRef::Placed { .. } => true,
-        PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } | PlaneRef::Flipped { base, .. } => plane_is_fixed(base),
+        PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } | PlaneRef::Flipped { base, .. } | PlaneRef::Reframed { base, .. } => {
+            plane_is_fixed(base)
+        }
         _ => false,
     }
 }
@@ -5556,7 +5561,9 @@ fn plane_is_fixed(plane: &PlaneRef) -> bool {
 fn plane_reads_geometry(plane: &PlaneRef) -> bool {
     match plane {
         PlaneRef::Origin { .. } | PlaneRef::Custom { .. } | PlaneRef::Placed { .. } | PlaneRef::Construction { .. } => false,
-        PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } | PlaneRef::Flipped { base, .. } => plane_reads_geometry(base),
+        PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } | PlaneRef::Flipped { base, .. } | PlaneRef::Reframed { base, .. } => {
+            plane_reads_geometry(base)
+        }
         PlaneRef::Midplane { .. }
         | PlaneRef::TwoEdges { .. }
         | PlaneRef::ThreePoints { .. }

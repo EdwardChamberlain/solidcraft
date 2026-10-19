@@ -29,7 +29,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("sketch.create", "Create Sketch", create_sketch)
         .at("SOLID", "CREATE")
         .icon("sketch")
-        .params("plane: XY|XZ|YZ | construction plane name or id | {origin, x_dir, y_dir} | {face: [world x,y,z], body?: exact world body, index?: face index, path?: complete occurrence ids, fixed?: bool}; new face attachments require a unique certified source (a flat face of a sheet metal body attaches to its panel instead, in the flat pattern's coordinates), fixed:true explicitly freezes the selected plane; offset?: expr, flip?: bool | \"x\" | \"y\" (not on a face: sketch the plane from its other side, so the normal and the default extrude direction are reversed; a half turn about the plane's own x or y axis, true picks the one keeping the sketch's y axis upward; offset still moves along the unflipped normal), project_edges?: bool, name?"),
+        .params("plane: XY|XZ|YZ | construction plane name or id | {origin, x_dir, y_dir} | {face: [world x,y,z], body?: exact world body, index?: face index, path?: complete occurrence ids, fixed?: bool}; new face attachments require a unique certified source (a flat face of a sheet metal body attaches to its panel instead, in the flat pattern's coordinates), fixed:true explicitly freezes the selected plane; offset?: expr, flip?: bool | \"x\" | \"y\" (not on a face: sketch the plane from its other side, so the normal and the default extrude direction are reversed; a half turn about the plane's own x or y axis, true picks the one keeping the sketch's y axis upward; offset still moves along the unflipped normal), project_edges?: bool, reframe?: {origin?: [x,y,z], x_dir?: [x,y,z]} (the sketch's origin and x axis, whatever the plane is: the origin is moved onto the plane, x_dir is taken along it; the sketch stays attached to the plane), name?"),
     CommandSpec::new("sketch.edit", "Edit Sketch", edit_sketch).noundo().icon("sketch").params("sketch: id or name"),
     CommandSpec::new("sketch.finish", "Finish Sketch", finish_sketch).at("SKETCH", "FINISH SKETCH").icon("finish").enabled(in_sketch).noundo(),
     CommandSpec::new("sketch.line", "Line", draw_line)
@@ -543,7 +543,9 @@ pub(crate) fn author_path_for_rebind(s: &Session, feature: &solidcraft_doc::Feat
         let mut plane = plane;
         loop {
             match plane {
-                PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } | PlaneRef::Flipped { base, .. } => plane = base,
+                PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } | PlaneRef::Flipped { base, .. } | PlaneRef::Reframed { base, .. } => {
+                    plane = base
+                }
                 PlaneRef::Face { anchor: Some(anchor), .. } => {
                     saved = Some(anchor.author_path.clone());
                     break;
@@ -638,6 +640,22 @@ fn create_sketch(s: &mut Session, p: &Value) -> Result<Value> {
     let mut plane = plane_ref(s, p, cmd)?;
     if let Some(about_y) = flip_param(s, p, &plane, cmd)? {
         plane = PlaneRef::Flipped { base: Box::new(plane), about_y };
+    }
+    if let Some(reframe) = p.get("reframe").filter(|v| !v.is_null()) {
+        let point = |key: &str| -> Result<Option<Vec3>> {
+            match reframe.get(key) {
+                None | Some(Value::Null) => Ok(None),
+                Some(v) => vec3(v)
+                    .filter(|v| v.x.is_finite() && v.y.is_finite() && v.z.is_finite())
+                    .map(Some)
+                    .ok_or_else(|| bad(cmd, format!("`reframe.{key}` must be [x, y, z]"))),
+            }
+        };
+        let (origin, x_dir) = (point("origin")?, point("x_dir")?);
+        if origin.is_none() && x_dir.is_none() {
+            return Err(bad(cmd, "`reframe` needs `origin`, `x_dir` or both"));
+        }
+        plane = PlaneRef::Reframed { base: Box::new(plane), origin, x_dir };
     }
     create_sketch_with_plane(s, p, plane, None)
 }
@@ -2548,6 +2566,9 @@ mod infinite_tests;
 #[cfg(test)]
 #[path = "sketch_redundant_tests.rs"]
 mod redundant_tests;
+#[cfg(test)]
+#[path = "sketch_reframe_tests.rs"]
+mod reframe_tests;
 #[cfg(test)]
 #[path = "sketch_symmetry_point_tests.rs"]
 mod symmetry_point_tests;

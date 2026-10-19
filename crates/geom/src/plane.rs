@@ -45,6 +45,23 @@ impl Plane {
         if about_y { Plane { x: -self.x, ..*self } } else { Plane { y: -self.y, ..*self } }
     }
 
+    /// The plane with its x axis along `x_dir` (taken in the plane: the part along the normal is
+    /// dropped) and its origin at `origin` (moved onto the plane along the normal); either is
+    /// kept when `None`. `None` when `x_dir` lies along the normal (or is not finite).
+    pub fn reframed(&self, origin: Option<Vec3>, x_dir: Option<Vec3>) -> Option<Plane> {
+        let n = self.normal().normalized()?;
+        let origin = match origin {
+            Some(o) if o.x.is_finite() && o.y.is_finite() && o.z.is_finite() => o - n * (o - self.origin).dot(n),
+            Some(_) => return None,
+            None => self.origin,
+        };
+        let x = match x_dir {
+            Some(d) => (d - n * d.dot(n)).normalized()?,
+            None => self.x,
+        };
+        Some(Plane { origin, x, y: n.cross(x) })
+    }
+
     /// Named origin plane: `XY`, `XZ`, `YZ` (case-insensitive).
     pub fn named(name: &str) -> Option<Plane> {
         match name.to_ascii_uppercase().as_str() {

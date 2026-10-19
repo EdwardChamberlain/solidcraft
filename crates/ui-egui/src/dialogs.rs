@@ -352,6 +352,9 @@ pub struct Dialog {
     pub origin: Option<String>,
     /// Apply was pressed: once the feature is in, a fresh dialog for `origin` replaces this one.
     pub reopen: bool,
+    /// The plane, vector and point inputs the dialog takes (Advanced): their picks are the last
+    /// of `inputs`, in this order.
+    pub specs: Vec<crate::specifier::Specifier>,
 }
 
 /// OK computing off the window thread: the dialog's commands evaluated on a scratch copy of the
@@ -463,6 +466,7 @@ impl Dialog {
             extra: serde_json::Map::new(),
             refused: None,
             then_start: None,
+            specs: Vec::new(),
             origin: None,
             reopen: false,
         }
@@ -472,6 +476,15 @@ impl Dialog {
         let s = &app.session;
         let has_bodies = !s.world_state().bodies.is_empty();
         let mut d = match id {
+            "sketch.create" if app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced => {
+                // The plane, the direction of its x axis and the origin, each named explicitly.
+                let mut d = Dialog::new(Kind::Sketch, Vec::new());
+                use crate::specifier::{Class, Specifier, add};
+                add(app, &mut d, Specifier::new(Class::Plane, 0));
+                add(app, &mut d, Specifier::new(Class::Vector, 0));
+                add(app, &mut d, Specifier::new(Class::Point, 0));
+                d
+            }
             "sketch.create" => Dialog::new(Kind::Sketch, vec![SelInput::new("Plane", PLANES | PLANAR_FACES, false)]),
             "solid.extrude" => Dialog::new(
                 Kind::Extrude {
@@ -1769,7 +1782,7 @@ fn feature_pattern_reference_key(d: &Dialog, index: usize) -> Option<&'static st
     }
 }
 
-fn input_rows_range(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, range: std::ops::Range<usize>) {
+pub(crate) fn input_rows_range(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, range: std::ops::Range<usize>) {
     // Edit Text shows its Path input among its own rows.
     if matches!(d.kind, Kind::Text(_)) {
         return;
@@ -2306,9 +2319,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     // horizontally scrolling table cannot push a wide dialog two pixels past its limit.
     let horizontal_frame = frame.inner_margin.leftf() + frame.inner_margin.rightf() + 2.0 * frame.stroke.width;
     // OK is offered once the inputs make a feature.
-    let has_ok = !matches!(d.kind, Kind::Sketch | Kind::Params { .. } | Kind::Measure { .. });
+    let has_ok =
+        !matches!(d.kind, Kind::Params { .. } | Kind::Measure { .. }) && (!matches!(d.kind, Kind::Sketch) || crate::specifier::is_sketch(&d));
     let valid = match &d.kind {
         Kind::SaveMesh(_) => crate::dialogs_save_mesh::ready(&d.inputs),
+        Kind::Sketch if crate::specifier::is_sketch(&d) => sketch_commands(app, &d).is_ok(),
         Kind::SketchModify(crate::sketch_modify_ui::Mod::Corner { .. }) => {
             // Corner dialogs: preview errors are visual only; validation errors from
             // `apply_commands` go to `d.error`. OK stays enabled when the preview fails.
@@ -2424,7 +2439,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     ui.label(tr("dialog.selection_guidance"));
                     ui.end_row();
                 }
-                input_rows(&mut d, ui, &app.session);
+                if crate::specifier::is_sketch(&d) {
+                    enter |= sketch_specifier_rows(app, &mut d, ui);
+                } else {
+                    input_rows(&mut d, ui, &app.session);
+                }
                 match &mut d.kind {
                     Kind::Sketch => {
                         if d.error.is_some()
@@ -3254,7 +3273,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let nothing_focused = ctx.memory(|m| m.focused().is_none());
     let canvas_enter = enter_free && ctx.memory(|m| m.had_focus_last_frame(egui::Id::new("sc_canvas_value")));
     // Tables (configurations, a study's keys) take Enter for their cells.
-    let enter_applies = !matches!(d.kind, Kind::Sketch | Kind::Params { .. } | Kind::Measure { .. } | Kind::ConfirmDelete { .. })
+    let enter_applies = (!matches!(d.kind, Kind::Sketch) || crate::specifier::is_sketch(&d))
+        && !matches!(d.kind, Kind::Params { .. } | Kind::Measure { .. } | Kind::ConfirmDelete { .. })
         && !matches!(&d.kind, Kind::Motion(k) if k.wide());
     let report_active = app.issue_report.draft.is_some();
     if !report_active && enter_applies && app.applying.is_none() && (enter || canvas_enter || (enter_free && nothing_focused)) {
@@ -3282,6 +3302,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     // A plane picked for a new sketch starts it right away.
     let mut then_start = None;
     if matches!(d.kind, Kind::Sketch)
+        && !crate::specifier::is_sketch(&d)
         && d.error.is_none()
         && let Some(sel) = d.inputs.first().and_then(|i| i.items.first()).cloned()
     {
@@ -3310,6 +3331,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             Some(Ok(())) => {
                 cancel = true;
                 applied = true;
+                if crate::specifier::is_sketch(&d) {
+                    then_start = d.then_start;
+                }
             }
             Some(Err(e)) => d.refuse(app, e),
             None => {}
@@ -3663,6 +3687,45 @@ pub(crate) fn change_param(app: &mut SolveApp, name: &str, expression: &str) -> 
         .map_err(|e| crate::friendly_error("parameters.change", &e))
 }
 
+/// The Create Sketch dialog's rows (Advanced): the plane, the reference direction (the sketch's x
+/// axis) and the origin, each a specifier with its own Type.
+fn sketch_specifier_rows(app: &SolveApp, d: &mut Dialog, ui: &mut egui::Ui) -> bool {
+    use crate::specifier::show;
+    let mut enter = show(app, d, ui, 0, "Plane", "sketch_plane");
+    enter |= show(app, d, ui, 1, "Reference Direction", "sketch_direction");
+    enter |= show(app, d, ui, 2, "Sketch Origin", "sketch_origin");
+    enter
+}
+
+/// The commands the Create Sketch dialog runs: the datum plane its Type makes (if any), then the
+/// sketch on the plane, with the direction and origin when they were specified.
+pub(crate) fn sketch_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, String> {
+    use crate::specifier;
+    let plane = specifier::plane(app, d, 0)?;
+    let direction = specifier::vector(app, d, 1)?;
+    let origin = specifier::point(app, d, 2)?;
+    let mut params = json!({ "plane": plane.plane });
+    if let Some(Sel::Plane { name }) = &plane.sel
+        && direction.is_none()
+        && let Some(flip) = flip_toward_viewer(app, name)
+    {
+        params["flip"] = json!(flip);
+    }
+    let mut reframe = serde_json::Map::new();
+    if let Some(v) = direction {
+        reframe.insert("x_dir".into(), pt(v));
+    }
+    if let Some(p) = origin {
+        reframe.insert("origin".into(), pt(p));
+    }
+    if !reframe.is_empty() {
+        params["reframe"] = Value::Object(reframe);
+    }
+    let mut commands = plane.prefix;
+    commands.push(("sketch.create".to_string(), params));
+    Ok(commands)
+}
+
 /// Start a sketch on a picked plane or planar face and turn the view to face it.
 pub fn start_sketch(app: &mut SolveApp, sel: &Sel) -> Result<(), String> {
     let mut params = match sel {
@@ -3675,16 +3738,25 @@ pub fn start_sketch(app: &mut SolveApp, sel: &Sel) -> Result<(), String> {
     {
         params["flip"] = json!(flip);
     }
-    let before = app.cam;
-    app.run("sketch.create", params).map_err(|error| crate::friendly_error("sketch.create", &error))?;
-    app.pre_sketch_cam = Some(before);
-    look_at_sketch(app);
     // On a face: look at the picked point, not the plane's origin (a corner of the face),
     // which left the face filling the view off-centre like a big square.
-    if let Sel::Face { point, .. } = sel
+    let focus = if let Sel::Face { point, .. } = sel { Some(*point) } else { None };
+    start_sketch_with(app, vec![("sketch.create".to_string(), params)], focus)
+}
+
+/// Run the commands that make a sketch (datum planes first, `sketch.create` last) and turn the
+/// view to face it, looking at `focus` when given.
+pub(crate) fn start_sketch_with(app: &mut SolveApp, commands: Vec<(String, Value)>, focus: Option<Vec3>) -> Result<(), String> {
+    let before = app.cam;
+    for (cmd, params) in commands {
+        app.run(&cmd, params).map_err(|error| crate::friendly_error(&cmd, &error))?;
+    }
+    app.pre_sketch_cam = Some(before);
+    look_at_sketch(app);
+    if let Some(point) = focus
         && let Some(mut to) = app.cam_anim.as_ref().map(|a| a.to)
     {
-        to.target = *point;
+        to.target = point;
         app.animate_to(to);
     }
     Ok(())
@@ -3693,7 +3765,7 @@ pub fn start_sketch(app: &mut SolveApp, sel: &Sel) -> Result<(), String> {
 /// A new sketch on origin or construction plane `name` faces the viewer: when the camera is
 /// behind the plane's normal, the in-plane axis to turn the plane about (`"x"` or `"y"`), chosen
 /// so the sketch's y axis stays as upright on screen as it can (x then runs to the right).
-fn flip_toward_viewer(app: &SolveApp, name: &str) -> Option<&'static str> {
+pub(crate) fn flip_toward_viewer(app: &SolveApp, name: &str) -> Option<&'static str> {
     let plane = plane_by_name(app, name)?;
     let n = plane.normal();
     // Where the eye is: in perspective its position, in orthographic only its direction counts.
@@ -3706,7 +3778,7 @@ fn flip_toward_viewer(app: &SolveApp, name: &str) -> Option<&'static str> {
 }
 
 /// The world plane of an origin plane or a construction plane by name.
-fn plane_by_name(app: &SolveApp, name: &str) -> Option<solidcraft_engine::geom::Plane> {
+pub(crate) fn plane_by_name(app: &SolveApp, name: &str) -> Option<solidcraft_engine::geom::Plane> {
     if let Some(p) = solidcraft_engine::geom::Plane::named(name) {
         // In an active component its origin planes are the component's.
         let m = app.session.active_component_frame();
@@ -3767,6 +3839,10 @@ pub(crate) fn run_dialog(app: &mut SolveApp, d: &Dialog) -> Result<(), String> {
     // Saving asks for a file name first; `Err("")` is the user backing out of that.
     if let Kind::SaveMesh(k) = &d.kind {
         return crate::dialogs_save_mesh::run(app, k, &d.inputs);
+    }
+    if crate::specifier::is_sketch(d) {
+        let commands = sketch_commands(app, d)?;
+        return start_sketch_with(app, commands, None);
     }
     let commands = apply_commands(app, d)?;
     if let Some((_, marker)) = d.editing {
@@ -4838,7 +4914,7 @@ pub(crate) fn plane_sel(s: &Session, pl: &PlaneRef) -> Option<Sel> {
         PlaneRef::Origin { name } => Some(Sel::Plane { name: name.clone() }),
         PlaneRef::Construction { name } => Some(Sel::Plane { name: name.to_string() }),
         PlaneRef::Custom { plane } | PlaneRef::Face { plane, .. } => face_sel(s, plane.origin),
-        PlaneRef::Flipped { base, .. } => plane_sel(s, base),
+        PlaneRef::Flipped { base, .. } | PlaneRef::Reframed { base, .. } => plane_sel(s, base),
         _ => None,
     }
 }

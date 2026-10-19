@@ -82,7 +82,9 @@ impl FaceAnchor {
 pub fn plane_face_anchor(plane: &PlaneRef) -> Option<&FaceAnchor> {
     match plane {
         PlaneRef::Face { anchor, .. } => anchor.as_deref(),
-        PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } | PlaneRef::Flipped { base, .. } => plane_face_anchor(base),
+        PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } | PlaneRef::Flipped { base, .. } | PlaneRef::Reframed { base, .. } => {
+            plane_face_anchor(base)
+        }
         _ => None,
     }
 }
@@ -90,7 +92,9 @@ pub fn plane_face_anchor(plane: &PlaneRef) -> Option<&FaceAnchor> {
 fn has_face_reference(plane: &PlaneRef) -> bool {
     match plane {
         PlaneRef::Face { .. } => true,
-        PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } | PlaneRef::Flipped { base, .. } => has_face_reference(base),
+        PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } | PlaneRef::Flipped { base, .. } | PlaneRef::Reframed { base, .. } => {
+            has_face_reference(base)
+        }
         _ => false,
     }
 }
@@ -110,7 +114,7 @@ impl Document {
             }
             match plane {
                 PlaneRef::Face { anchor: Some(anchor), .. } => *plane = PlaneRef::Custom { plane: doc.resolve_face_anchor(anchor, author, state)? },
-                PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } | PlaneRef::Flipped { base, .. } => {
+                PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } | PlaneRef::Flipped { base, .. } | PlaneRef::Reframed { base, .. } => {
                     replace(doc, base, author, state, depth + 1)?
                 }
                 _ => {}

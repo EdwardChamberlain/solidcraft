@@ -78,6 +78,10 @@ pub fn left_timeline(app: &mut SolveApp, ui: &mut egui::Ui) {
         let heading =
             if app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced { "FEATURE TREE" } else { "FEATURE HISTORY" };
         ui.label(RichText::new(heading).size(11.0).strong().color(t.text_dim));
+        if app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced && selected_related(app).is_some() {
+            ui.label(RichText::new("parents").size(11.0).color(t.warning));
+            ui.label(RichText::new("children").size(11.0).color(t.preview_add));
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let count = selected_feature_ids(app).len() + app.tree.picked_timeline_groups.len();
             if count > 0 {
@@ -618,6 +622,14 @@ fn vertical_group_row(
     open
 }
 
+/// The parents and children of the one selected feature (none for no selection or several).
+fn selected_related(app: &SolveApp) -> Option<crate::shell::part_nav_tree::Related> {
+    match selected_feature_ids(app).as_slice() {
+        [id] => Some(crate::shell::part_nav_tree::related(app, *id)),
+        _ => None,
+    }
+}
+
 fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     ui.spacing_mut().item_spacing.y = 0.0;
@@ -655,6 +667,10 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
     let mut previous_visible_group = None;
     let mut hovered = None;
     let mut edit = None;
+    // The Advanced tree: an eye on every row, and the selected feature's parents and children
+    // told apart by the colour of their names.
+    let advanced = app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced;
+    let related = if advanced { selected_related(app) } else { None };
 
     for (index, (id, name, icon, suppressed, ty, kind)) in features.iter().enumerate() {
         let group_id = group_for(&groups, *id);
@@ -703,6 +719,9 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
         let patterns_open = crate::browser::is_open(app, &pattern_key, true);
         let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::click_and_drag());
         let fold_rect = Rect::from_min_size(rect.left_top() + vec2(indent, 0.0), vec2(16.0, rect.height()));
+        let eye = if advanced { crate::shell::part_nav_tree::eye_of(app, *id) } else { None };
+        let eye_rect = Rect::from_center_size(pos2(rect.left() + 11.0 + indent, rect.center().y), vec2(16.0, 16.0));
+        let on_eye = advanced && response.interact_pointer_pos().is_some_and(|p| eye_rect.contains(p));
         let on_fold = has_patterns && response.interact_pointer_pos().is_some_and(|p| fold_rect.contains(p));
         crate::scenario::publish_handle(&format!("timeline:{name}"), rect.center());
         let result = app.session.model.result(*id);
@@ -727,14 +746,36 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
             crate::icons::glyphs::disclosure(ui.painter(), fold_rect.shrink(3.0), patterns_open, t.text_dim);
             crate::scenario::publish_handle(&format!("timeline-sketch-fold:{name}"), fold_rect.center());
         }
-        let icon_rect =
-            Rect::from_center_size(pos2(rect.left() + 13.0 + indent + if has_patterns { 16.0 } else { 0.0 }, rect.center().y), vec2(18.0, 18.0));
+        let lead = if advanced { 20.0 } else { 0.0 };
+        if advanced {
+            // The eye is always there so the names line up; a row with nothing to hide has none.
+            if let Some(eye) = &eye {
+                let on = crate::shell::part_nav_tree::shown(app, eye);
+                icons::paint_icon(ui.painter(), eye_rect, "eye", if on { 1.0 } else { 0.35 });
+                if !on {
+                    ui.painter().line_segment(
+                        [eye_rect.left_bottom() + vec2(2.0, -2.0), eye_rect.right_top() + vec2(-2.0, 2.0)],
+                        Stroke::new(1.4, t.text_dim),
+                    );
+                }
+                crate::scenario::publish_handle(&format!("eye:{name}"), eye_rect.center());
+            }
+        }
+        let icon_rect = Rect::from_center_size(
+            pos2(rect.left() + 13.0 + indent + lead + if has_patterns { 16.0 } else { 0.0 }, rect.center().y),
+            vec2(18.0, 18.0),
+        );
         let ink = if rolled || *suppressed { t.border } else { t.icon };
         icons::paint(ui.painter(), icon_rect, icon, ink, if rolled { t.panel_header } else { t.icon_fill }, if rolled { t.border } else { t.accent });
         if *suppressed {
             ui.painter().line_segment([icon_rect.left_bottom(), icon_rect.right_top()], Stroke::new(1.5, t.text_dim));
         }
-        let text_colour = if rolled || *suppressed { t.text_dim } else { t.text };
+        let text_colour = match &related {
+            Some(r) if r.parents.contains(id) => t.warning,
+            Some(r) if r.children.contains(id) => t.preview_add,
+            _ if rolled || *suppressed => t.text_dim,
+            _ => t.text,
+        };
         ui.painter().text(
             pos2(icon_rect.right() + 7.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
@@ -760,7 +801,7 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
         if response.hovered() {
             hovered = Some(*id);
         }
-        if response.drag_started() && !on_fold {
+        if response.drag_started() && !on_fold && !on_eye {
             if !selected {
                 select_only(app, TimelineItem::Feature(*id));
             }
@@ -776,7 +817,9 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
         }
         tip.push_str("\nDouble-click to edit · drag to reorder · right-click for more");
         let response = response.on_hover_text(tip);
-        if response.clicked() && on_fold {
+        if response.clicked() && on_eye {
+            crate::shell::part_nav_tree::toggle(app, *id);
+        } else if response.clicked() && on_fold {
             crate::browser::toggle(app, &pattern_key, true);
         } else if response.clicked() {
             select_item(app, ui, TimelineItem::Feature(*id), &order);

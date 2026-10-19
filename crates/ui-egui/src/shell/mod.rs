@@ -8,6 +8,7 @@ pub mod advanced;
 pub mod assembly_nav;
 pub mod classic;
 pub mod part_nav;
+pub mod part_nav_tree;
 
 use crate::SolveApp;
 use crate::prefs::ModellingApproach;

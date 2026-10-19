@@ -150,6 +150,11 @@ impl ModelBody {
         (self.body.size() * 1e-3).max(1e-3)
     }
 
+    /// Identity of the body's content: it changes when a feature changes the body.
+    pub fn content_key(&self) -> u64 {
+        self.key
+    }
+
     /// Already computed display geometry; saving must not trigger cold tessellation.
     pub fn cached_mesh(&self) -> Option<Arc<Mesh>> {
         self.mesh.get().cloned()

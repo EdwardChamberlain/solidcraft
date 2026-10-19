@@ -314,6 +314,7 @@ fn scene_key(app: &SolveApp) -> u64 {
     crate::theme::is_dark().hash(&mut h);
     crate::theme::vision().hash(&mut h);
     app.session.active_sketch.hash(&mut h);
+    crate::work_part::scene_key(app).hash(&mut h);
     h.finish()
 }
 
@@ -646,17 +647,20 @@ fn build_scene(app: &SolveApp) -> GpuScene {
     let mut made: std::collections::HashMap<u64, CachedBlock> = std::collections::HashMap::new();
     let mut run: Vec<BodyDraw> = Vec::new();
     let mut run_key = std::collections::hash_map::DefaultHasher::new();
-    for b in &st.bodies {
-        if !app.session.body_visible(&b.name) || app.preview.replaced.contains(&b.name) {
+    // The rest of the assembly, when this design is the work part of one: faded, drawn, never picked.
+    let context = crate::work_part::context_bodies(app);
+    let context_bodies = context.iter().flat_map(|c| c.iter()).map(|b| (b, true));
+    for (b, in_context) in st.bodies.iter().map(|b| (b, false)).chain(context_bodies) {
+        if !in_context && (!app.session.body_visible(&b.name) || app.preview.replaced.contains(&b.name)) {
             continue;
         }
-        let faded = body_faded(app, b, &active_bodies);
-        let base = body_color(&s.doc, b).unwrap_or(tk.body);
+        let faded = in_context || body_faded(app, b, &active_bodies);
+        let base = if in_context { tk.body } else { body_color(&s.doc, b).unwrap_or(tk.body) };
         let col = if faded { c4(base.gamma_multiply(0.35)) } else { c4(base) };
         // Appearances: the body's opacity, and faces with looks of their own.
-        let opacity = s.doc.model_body_opacity(b);
+        let opacity = if in_context { 1.0 } else { s.doc.model_body_opacity(b) };
         let face_looks: std::collections::HashMap<usize, solidcraft_engine::doc::appearance::Look> =
-            if shaded { s.doc.face_colors(b).into_iter().collect() } else { Default::default() };
+            if shaded && !in_context { s.doc.face_colors(b).into_iter().collect() } else { Default::default() };
         let opaque = !faded && opacity >= 0.999 && face_looks.values().all(|l| l.opacity >= 0.999);
         let planned = drawn_plan(app, b, opaque);
         let on_gpu = planned.is_some();

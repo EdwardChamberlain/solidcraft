@@ -27,6 +27,7 @@ still in use.
 | Resource bar | Vertical tabs at the left edge: **Part Navigator** and **Assembly Navigator**. Click the open one to hide it. |
 | Part Navigator | The feature tree: the Origin (planes and axes), then every feature in the order it replays, with the rollback marker. Sketches stay where they were made. Below it, the selected feature's **Dependencies** (what it is made from, what is deleted with it, what would fail without it) and **Details** (its values, and Edit). |
 | Assembly Navigator | The components of this part: where each part file is, whether it is found, how many times it is placed. Add a component, make a new one, update parts from their files, Save all. Right-click a component for Make displayed part, Hide/Show, Fix in place and Break link. |
+| Work part banner | At the top of the Part Navigator in a part made the *work part* of an assembly: a switch for the assembly drawn around the part, and **Back to assembly**. |
 | Cue line | Along the bottom: what to pick next, or the sketch's state ("fully constrained", "N degrees of freedom"). |
 
 ## Dialogs
@@ -50,7 +51,12 @@ it into the dialog. A pattern's direction takes an axis, an edge or a planar fac
 4. In a second part, **Assembly › New Part Component** makes `<name>.solidcraft` beside this file and
    links it in as an empty component; **Add component** links an existing part file. Open the part
    from the Assembly Navigator to model it; its bodies appear in the assembly when you switch back.
-5. Edit the part and switch back to the assembly's tab: the assembly shows the part as it is now,
+5. To edit a part with its assembly around it, click **Edit in context** on its row in the Assembly
+   Navigator (or right-click › Edit in context). The part's tab opens and the rest of the assembly
+   is drawn around it, faded, where it stands in the part's own frame, so you can see what the
+   part must clear or fit. The context is for the eye: it can't be picked and no feature can refer
+   to it. **Back to assembly** returns to the assembly's tab.
+6. Edit the part and switch back to the assembly's tab: the assembly shows the part as it is now,
    saved or not. **Save all** writes every open design and brings the assemblies up to date.
 
 See [advanced-approach-files.md](advanced-approach-files.md) for how parts reference parts, what
@@ -58,7 +64,8 @@ is built and what is not yet.
 
 ## Not built yet
 
-- Editing a part in the context of an assembly (NX's *work part*): a part is edited in its own tab.
+- Referring to the assembly's geometry from the work part (picking a face of another component, or
+  linking to it): the context is drawn but is not pickable.
 - Persistent names across the file boundary: a joint or feature that refers to a face of a linked
   part keeps its position when the part changes shape.
 - A shared evaluation between a part open in a tab and the same part linked in an assembly.

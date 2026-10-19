@@ -79,11 +79,42 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         .resizable(false)
         .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(6, 6)))
         .show(ui, |ui| {
+            work_banner(app, ui);
             let total = ui.available_height();
             ui.allocate_ui(vec2(ui.available_width(), (total * 0.58).max(120.0)), |ui| timeline_left::left_timeline(app, ui));
             ui.separator();
             panes(app, ui);
         });
+}
+
+/// When this design is the work part of an assembly: say so, and offer the way back and the
+/// switch for the assembly drawn around it.
+fn work_banner(app: &mut SolveApp, ui: &mut egui::Ui) {
+    let Some(work) = app.work.clone() else { return };
+    let t = Tokens::get();
+    let assembly = std::path::Path::new(&work.assembly).file_stem().map_or_else(|| work.assembly.clone(), |n| n.to_string_lossy().into_owned());
+    let open = crate::documents::tab_of(app, &work.assembly).is_some();
+    egui::Frame::NONE.fill(t.accent.gamma_multiply(0.18)).corner_radius(3.0).inner_margin(egui::Margin::symmetric(6, 4)).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.label(RichText::new(crate::i18n::format("ui.work_part_banner", &[("part", &work.name), ("assembly", &assembly)])).strong().size(12.0));
+        ui.horizontal_wrapped(|ui| {
+            let mut show = work.show;
+            if ui.checkbox(&mut show, app.tr("ui.work_part_context")).changed()
+                && let Some(w) = app.work.as_mut()
+            {
+                w.show = show;
+            }
+            let back = ui.add_enabled(open, egui::Button::new(app.tr("ui.work_part_return")));
+            crate::scenario::publish_rect("part_nav:return", back.rect);
+            if back.clicked() {
+                crate::work_part::return_to_assembly(app);
+            }
+        });
+        if !open {
+            ui.label(RichText::new(app.tr("ui.work_part_closed")).size(11.0).color(t.text_dim));
+        }
+    });
+    ui.add_space(4.0);
 }
 
 fn panes(app: &mut SolveApp, ui: &mut egui::Ui) {

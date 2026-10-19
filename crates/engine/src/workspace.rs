@@ -36,3 +36,8 @@ pub(crate) fn open_design(file: &Path) -> Option<Document> {
     let file = crate::cmd::normalized(file);
     OPEN.with(|o| o.borrow().iter().find(|(p, _)| *p == file).map(|(_, d)| (**d).clone()))
 }
+
+/// Do these two paths name the same file (made absolute, `.` and `..` worked out)?
+pub fn same_file(a: &str, b: &str) -> bool {
+    crate::cmd::normalized(Path::new(a)) == crate::cmd::normalized(Path::new(b))
+}

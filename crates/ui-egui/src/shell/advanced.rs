@@ -37,6 +37,12 @@ pub fn set_pane(ctx: &egui::Context, pane: Pane) {
 }
 
 pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
+    // A part just made the work part: its Part Navigator (and the banner) comes forward.
+    if let Some(work) = app.work.as_mut().filter(|w| w.fresh) {
+        work.fresh = false;
+        set_pane(ui.ctx(), Pane::Part);
+        app.ui.show_browser = true;
+    }
     toolbar::toolbar(app, ui);
     selection_bar(app, ui);
     cue_line(app, ui);

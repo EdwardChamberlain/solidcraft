@@ -61,6 +61,22 @@ A component of a part can be linked to another part file (`component.insert_desi
   and closing the app keeps what is unsaved. A crash report carries the design; the linked
   parts' bodies are inside it, so replaying it needs no part file.
 
+## Editing in context (the work part)
+
+A part is edited in its own tab, where every pick and command works on the part itself. From the
+Assembly Navigator (**Edit in context**) the part's tab also shows the rest of the assembly, faded,
+in the part's frame (`work_part.rs`):
+
+- The part's tab remembers the assembly it is the work part of (per tab, like any view state).
+- The context is the assembly's world as that tab shows it, minus the component itself, moved by
+  the inverse of the component's placement, so the part sits where it was designed and the other
+  components stand around it where they are in the assembly. Bodies hidden in the assembly stay
+  hidden.
+- It is drawn, never picked: the part's own world has none of it, so no pick, dialog or feature can
+  name it. It updates when the assembly's tab changes, and is off when that tab is closed.
+- Changes made in the part reach the assembly the way any edit of a part in another tab does
+  (switching to the assembly's tab, Update parts, Save all).
+
 ## What a reference does not do yet
 
 1. **The link is an exact copy, refreshed from the part**, not the part's own evaluation. The linked
@@ -73,7 +89,8 @@ A component of a part can be linked to another part file (`component.insert_desi
    one Import, so a part used twice is two components and a joint is never ambiguous; the
    limit applies to components kept inside a file.
 3. **A part that uses another's geometry** (a feature of one file consuming a body of another) is
-   not supported. A part's own recipe depends only on itself.
+   not supported. A part's own recipe depends only on itself; the work part's context is drawn for
+   the eye only.
 4. **No per-component configuration.** Configurations apply to the whole design.
 5. **One design per session.** The open designs are registered for linking, but each is still its
    own `Session`, with its own undo; an edit in one tab reaches another when that tab is shown (or

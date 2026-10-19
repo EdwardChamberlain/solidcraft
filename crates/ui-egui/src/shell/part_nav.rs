@@ -5,7 +5,6 @@
 //! feature in creation order, sketches where they were made, never nested under what uses them.
 
 use egui::{RichText, vec2};
-use serde_json::json;
 
 use crate::theme::Tokens;
 use crate::{SolveApp, timeline, timeline_left};
@@ -20,11 +19,10 @@ pub struct Facts {
     pub error: Option<String>,
     /// (label, expression) of each value the feature takes.
     pub inputs: Vec<(String, String)>,
-    /// The sketches the feature is made from.
+    /// The features it is built on (its sketches, and what made the bodies it works on).
     pub parents: Vec<String>,
-    /// Features deleted along with it, and those that would fail without it.
+    /// The features built on it.
     pub children: Vec<String>,
-    pub would_fail: Vec<String>,
 }
 
 /// A feature type as a person reads it: `SurfaceExtrudeFeature` is "Surface Extrude".
@@ -40,11 +38,12 @@ pub fn friendly_kind(type_name: &str) -> String {
     out
 }
 
-/// The facts of a feature: parents and values are cheap; children need the design evaluated
-/// without the feature, so they are asked for separately ([`children_of`]).
+/// The facts of a feature. Parents and children come from the dependency graph, worked out once
+/// per revision, so selecting a feature never waits for an evaluation.
 pub fn facts(app: &SolveApp, id: u64) -> Option<Facts> {
     let doc = &app.session.doc;
     let f = doc.feature(id)?;
+    let (parents, children) = super::part_nav_tree::names_of(app, id);
     Some(Facts {
         id,
         name: f.name.clone(),
@@ -52,24 +51,9 @@ pub fn facts(app: &SolveApp, id: u64) -> Option<Facts> {
         suppressed: f.suppressed,
         error: app.session.model.result(id).and_then(|r| r.error.clone()),
         inputs: f.kind.inputs().into_iter().map(|(label, e, _)| (label.to_string(), e.to_string())).collect(),
-        parents: f.kind.input_sketches().into_iter().filter_map(|sid| doc.feature(sid).map(|p| p.name.clone())).collect(),
-        children: Vec::new(),
-        would_fail: Vec::new(),
+        parents,
+        children,
     })
-}
-
-/// What deleting the feature takes with it and breaks (`timeline.dependents`).
-pub fn children_of(app: &SolveApp, id: u64) -> (Vec<String>, Vec<String>) {
-    let mut scratch = app.session.scratch();
-    let Ok(r) = scratch.execute("timeline.dependents", &json!({"feature": id})) else { return (Vec::new(), Vec::new()) };
-    let names = |key: &str| -> Vec<String> {
-        r.get(key).and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default()
-    };
-    (names("deleted_with_it"), names("would_fail"))
-}
-
-fn cache_id() -> egui::Id {
-    egui::Id::new("sc_part_nav_children")
 }
 
 pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
@@ -123,25 +107,11 @@ fn panes(app: &mut SolveApp, ui: &mut egui::Ui) {
         ui.label(RichText::new(app.tr("ui.part_nav_pick")).color(t.text_dim));
         return;
     };
-    let Some(mut facts) = facts(app, id) else { return };
-    // Children cost an evaluation: asked once per design revision and feature, not per frame.
-    let key = (app.session.revision, id);
-    let cached: Option<((u64, u64), (Vec<String>, Vec<String>))> = ui.data(|d| d.get_temp(cache_id()));
-    let (children, would_fail) = match cached {
-        Some((k, v)) if k == key => v,
-        _ => {
-            let v = children_of(app, id);
-            ui.data_mut(|d| d.insert_temp(cache_id(), (key, v.clone())));
-            v
-        }
-    };
-    facts.children = children;
-    facts.would_fail = would_fail;
+    let Some(facts) = facts(app, id) else { return };
     egui::ScrollArea::vertical().id_salt("sc_part_nav_panes").auto_shrink([false, false]).show(ui, |ui| {
         egui::CollapsingHeader::new(RichText::new(app.tr("ui.dependencies")).strong().size(12.0)).default_open(true).show(ui, |ui| {
             list(app, ui, "ui.parents", &facts.parents);
             list(app, ui, "ui.children", &facts.children);
-            list(app, ui, "ui.would_fail", &facts.would_fail);
         });
         egui::CollapsingHeader::new(RichText::new(app.tr("ui.details")).strong().size(12.0)).default_open(true).show(ui, |ui| {
             ui.label(RichText::new(format!("{} — {}", facts.name, facts.kind)).strong());

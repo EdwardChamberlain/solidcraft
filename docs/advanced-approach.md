@@ -25,7 +25,7 @@ still in use.
 | Ribbon | **Home** (Feature, Datum, Pattern), **Assembly**, **Analysis**, **View**, **Tools**; **Sketch** appears while a sketch is open. The same commands as Classic, grouped and cut down to a part-modelling set. |
 | Selection bar | The selection filter: what a click in the viewport can pick. |
 | Resource bar | Vertical tabs at the left edge: **Part Navigator** and **Assembly Navigator**. Click the open one to hide it. |
-| Part Navigator | The feature tree: the Origin (planes and axes), then every feature in the order it replays, with the rollback marker. Sketches stay where they were made. Select a feature and its **parents** (what it is built on) show in the warning colour and its **children** (what is built on it) in the addition colour, one step each way; a legend sits in the tree's heading. Every row has an **eye** at its left that hides what the feature made: a sketch, a datum, or the body (hiding a chamfer hides the body, so every feature that built it shows as hidden). Below the tree, the selected feature's **Dependencies** (what it is made from, what is deleted with it, what would fail without it) and **Details** (its values, and Edit). |
+| Part Navigator | The feature tree: the Origin (planes and axes), then every feature in the order it replays, with the rollback marker. Sketches stay where they were made. Select a feature and its **parents** (what it is built on) show in the warning colour and its **children** (what is built on it) in the addition colour, one step each way; a legend sits in the tree's heading. Every row has an **eye** at its left that hides what the feature made: a sketch, a datum, or the body (hiding a chamfer hides the body, so every feature that built it shows as hidden). Below the tree, the selected feature's **Dependencies** (its **Parent** features, which it is built on, and its **Child** features, built on it; worked out from the design's references once per change, so selecting a feature is instant) and **Details** (its values, and Edit). |
 | Assembly Navigator | The components of this part: where each part file is, whether it is found, how many times it is placed. Add a component, make a new one, update parts from their files, Save all. Right-click a component for Make displayed part, Hide/Show, Fix in place and Break link. |
 | Work part banner | At the top of the Part Navigator in a part made the *work part* of an assembly: a switch for the assembly drawn around the part, and **Back to assembly**. |
 | Cue line | Along the bottom: what to pick next, or the sketch's state ("fully constrained", "N degrees of freedom"). |
@@ -33,10 +33,9 @@ still in use.
 ## Dialogs
 
 Dialogs keep SolidCraft's look and work the NX way: docked at the left, a **Type** row first when a
-command has several methods, numbered selection steps, collapsible groups (Extrude: Limits, Draft,
-Boolean; Revolve: Limits, Boolean; Hole: Position, Form and Dimensions, Limits; Fillet and Chamfer: Radius or Offsets, Settings), and **OK / Apply / Cancel** with **Reset**. Apply makes the
+command has several methods, numbered selection steps, collapsible groups (Extrude: Section, Direction, Limits, Offset, Draft, Boolean; Revolve: Limits, Boolean; Hole: Position, Form and Dimensions, Limits; Fillet and Chamfer: Radius or Offsets, Settings), and **OK / Apply / Cancel** with **Reset**. Apply makes the
 feature and starts the next one. A middle click moves to the next pick and confirms once every
-pick is made. Dialogs that preview end with a **Preview** group: *Show result* turns the live
+pick is made. **Extrude** is laid out the way the feature is described: Section, a Direction (a Specify Vector: the profile normal unless one is given, with Reverse; a direction across the normal is not supported yet), Limits with a **Start** (Value, Value (Other Side), Symmetric Value, Until Selected) and an **End** (Value, Until Selected, Through All), and an **Offset** (None, Symmetric, Inside, Outside, Two-Sided) that is the wall "thin" is in Classic. The End distance is measured from the Start, as the command's distance is. Dialogs that preview end with a **Preview** group: *Show result* turns the live
 result off and on (OK still makes the feature). A To Object or From Object extent takes a vertex or
 construction point, a face or an edge (the place picked).
 

@@ -2,7 +2,9 @@
 //! a feature depends on and which depend on it (shown by the colour of their names), and the
 //! eye that hides what the feature made. Pure functions of the session, so they are tested alone.
 
-use std::collections::BTreeSet;
+use std::cell::RefCell;
+use std::collections::{BTreeSet, HashMap};
+use std::rc::Rc;
 
 use crate::SolveApp;
 
@@ -13,57 +15,90 @@ pub struct Related {
     pub children: BTreeSet<u64>,
 }
 
-/// The bodies feature `id` made or changed, by name: new in its result, or changed from the
-/// result before it.
-fn touched(app: &SolveApp, id: u64) -> Vec<String> {
-    let results = &app.session.model.results;
-    let Some(at) = results.iter().position(|r| r.id == id) else { return Vec::new() };
-    let before = at.checked_sub(1).and_then(|i| results.get(i));
-    let Some(after) = results.get(at) else { return Vec::new() };
-    after
-        .state
-        .bodies
-        .iter()
-        .filter(|b| before.is_none_or(|p| p.state.body(&b.name).is_none_or(|old| old.content_key() != b.content_key())))
-        .map(|b| b.name.clone())
-        .collect()
+/// The design's dependency graph, worked out once per revision (a click must not wait for it).
+#[derive(Default)]
+struct Graph {
+    /// The bodies each feature made or changed, by name: new in its result, or changed from the
+    /// result before it.
+    touched: HashMap<u64, Vec<String>>,
+    /// The features each feature is built on: its sketches, the features and bodies it names, and
+    /// the earlier features that made or changed the bodies it works on.
+    parents: HashMap<u64, BTreeSet<u64>>,
 }
 
-/// The feature before `index` that last made or changed the body `name`.
-fn last_to_touch(app: &SolveApp, index: usize, name: &str) -> Option<u64> {
-    app.session.doc.features.iter().take(index).rev().map(|f| f.id).find(|id| touched(app, *id).iter().any(|b| b == name))
+type Key = (u64, usize, usize, usize);
+
+thread_local! {
+    static CACHE: RefCell<Option<(Key, Rc<Graph>)>> = const { RefCell::new(None) };
 }
 
-/// The features feature `id` is built on: its sketches, the features and bodies it names, and
-/// the earlier features that made or changed the bodies it works on.
-fn parents_of(app: &SolveApp, index: usize) -> BTreeSet<u64> {
+fn build(app: &SolveApp) -> Graph {
     let doc = &app.session.doc;
-    let mut out = BTreeSet::new();
-    let Some(feature) = doc.features.get(index) else { return out };
-    let (sketches, features, bodies) = feature.kind.references();
-    out.extend(sketches.into_iter().filter(|s| doc.feature(*s).is_some()));
-    out.extend(features.iter().filter_map(|n| doc.find_feature(n)).map(|f| f.id));
-    let worked_on = touched(app, feature.id);
-    for name in bodies.iter().chain(worked_on.iter()) {
-        out.extend(last_to_touch(app, index, name));
+    let results = &app.session.model.results;
+    let mut g = Graph::default();
+    for (i, r) in results.iter().enumerate() {
+        let before = i.checked_sub(1).and_then(|k| results.get(k));
+        let names = r
+            .state
+            .bodies
+            .iter()
+            .filter(|b| before.is_none_or(|p| p.state.body(&b.name).is_none_or(|old| old.content_key() != b.content_key())))
+            .map(|b| b.name.clone())
+            .collect();
+        g.touched.insert(r.id, names);
     }
-    out.remove(&feature.id);
-    out
+    let by_name: HashMap<String, u64> = doc.features.iter().map(|f| (f.name.to_ascii_lowercase(), f.id)).collect();
+    // The last feature to make or change each body, as the features go by in order.
+    let mut last: HashMap<&str, u64> = HashMap::new();
+    for f in &doc.features {
+        let (sketches, features, bodies) = f.kind.references();
+        let mut parents = BTreeSet::new();
+        parents.extend(sketches.into_iter().filter(|s| doc.feature(*s).is_some()));
+        parents.extend(features.iter().filter_map(|n| by_name.get(&n.to_ascii_lowercase()).copied()));
+        let mine = g.touched.get(&f.id).map(Vec::as_slice).unwrap_or_default();
+        for name in bodies.iter().map(String::as_str).chain(mine.iter().map(String::as_str)) {
+            parents.extend(last.get(name).copied());
+        }
+        parents.remove(&f.id);
+        g.parents.insert(f.id, parents);
+        for name in mine {
+            last.insert(name.as_str(), f.id);
+        }
+    }
+    g
+}
+
+fn graph(app: &SolveApp) -> Rc<Graph> {
+    let key: Key =
+        (app.session.revision, app.session.doc.features.len(), app.session.doc.features.as_ptr() as usize, app.session.model.results.len());
+    CACHE.with(|c| {
+        if let Some((k, g)) = c.borrow().as_ref()
+            && *k == key
+        {
+            return Rc::clone(g);
+        }
+        let g = Rc::new(build(app));
+        *c.borrow_mut() = Some((key, Rc::clone(&g)));
+        g
+    })
 }
 
 /// Parents and children of feature `id`, one step each way (a child of a parent is not a
 /// child), so the tree reads as the recipe it is.
 pub fn related(app: &SolveApp, id: u64) -> Related {
-    let doc = &app.session.doc;
-    let mut r = Related::default();
-    let Some(index) = doc.features.iter().position(|f| f.id == id) else { return r };
-    r.parents = parents_of(app, index);
-    for (i, f) in doc.features.iter().enumerate() {
-        if f.id != id && parents_of(app, i).contains(&id) {
-            r.children.insert(f.id);
-        }
+    let g = graph(app);
+    Related {
+        parents: g.parents.get(&id).cloned().unwrap_or_default(),
+        children: g.parents.iter().filter(|(_, p)| p.contains(&id)).map(|(c, _)| *c).filter(|c| *c != id).collect(),
     }
-    r
+}
+
+/// The names of the parents and the children of a feature, in the order of the tree.
+pub fn names_of(app: &SolveApp, id: u64) -> (Vec<String>, Vec<String>) {
+    let r = related(app, id);
+    let pick =
+        |set: &BTreeSet<u64>| -> Vec<String> { app.session.doc.features.iter().filter(|f| set.contains(&f.id)).map(|f| f.name.clone()).collect() };
+    (pick(&r.parents), pick(&r.children))
 }
 
 /// What a row's eye shows and hides.
@@ -87,7 +122,8 @@ pub fn eye_of(app: &SolveApp, id: u64) -> Option<Eye> {
         return Some(Eye::Datum(f.name.clone()));
     }
     let world = app.session.world_state();
-    let bodies: Vec<String> = touched(app, id).into_iter().filter(|b| world.body(b).is_some()).collect();
+    let g = graph(app);
+    let bodies: Vec<String> = g.touched.get(&id).into_iter().flatten().filter(|b| world.body(b).is_some()).cloned().collect();
     (!bodies.is_empty()).then_some(Eye::Bodies(bodies))
 }
 
@@ -221,5 +257,28 @@ mod tests {
         assert!(h.app.session.visibility.hidden_bodies.contains(&"Main".to_string()), "the click hid the body");
         assert!(!h.app.session.selection.iter().any(|s| matches!(s, solidcraft_engine::Sel::Feature { id } if *id == extrude)));
         let _ = extrude;
+    }
+
+    #[test]
+    fn selecting_a_feature_never_evaluates_the_design() {
+        // The sample plate has fillets and cuts: evaluating without a feature takes tens to
+        // hundreds of milliseconds, so a click that did it would hang. Parents and children come
+        // from a graph worked out once per revision.
+        let mut h = Harness::new();
+        h.app.preferences.modelling_approach = ModellingApproach::Advanced;
+        h.app.session.run_script(&solidcraft_engine::sample::script()).unwrap();
+        h.frames(6);
+        let ids: Vec<u64> = h.app.session.doc.features.iter().map(|f| f.id).collect();
+        let revision = h.app.session.revision;
+        let started = std::time::Instant::now();
+        for id in &ids {
+            let _ = crate::shell::part_nav::facts(&h.app, *id);
+            let _ = related(&h.app, *id);
+        }
+        assert!(started.elapsed() < std::time::Duration::from_millis(50), "{:?} for {} features", started.elapsed(), ids.len());
+        assert_eq!(h.app.session.revision, revision, "nothing was evaluated or changed");
+        let base = id_of(&h, "Base");
+        let r = related(&h.app, base);
+        assert!(!r.children.is_empty() && r.parents.is_empty(), "{r:?}");
     }
 }

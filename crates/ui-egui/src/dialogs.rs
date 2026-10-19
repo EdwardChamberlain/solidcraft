@@ -24,7 +24,7 @@ const DIRS: [&str; 4] = ["positive", "negative", "symmetric", "positive"];
 pub const TWO_SIDES: usize = 3;
 /// Thin Extrude wall locations, as `solid.extrude` names them, and their labels.
 const WALL_SIDES: [&str; 4] = ["center", "inside", "outside", "two_sides"];
-const WALL_LABELS: [&str; 4] = ["Center", "Inside", "Outside", "Two Sides"];
+pub(crate) const WALL_LABELS: [&str; 4] = ["Center", "Inside", "Outside", "Two Sides"];
 /// What an extrude's first input picks: profiles or planar faces, or curves too when thin.
 const EXTRUDE_ACCEPT: Accept = PROFILES | PLANAR_FACES;
 const THIN_ACCEPT: Accept = PROFILES | CURVES;
@@ -352,8 +352,8 @@ pub struct Dialog {
     pub origin: Option<String>,
     /// Apply was pressed: once the feature is in, a fresh dialog for `origin` replaces this one.
     pub reopen: bool,
-    /// The plane, vector and point inputs the dialog takes (Advanced): their picks are the last
-    /// of `inputs`, in this order.
+    /// The plane, vector and point inputs the dialog takes (Advanced); their picks are among
+    /// `inputs`, tagged with the specifier's number.
     pub specs: Vec<crate::specifier::Specifier>,
 }
 
@@ -759,6 +759,11 @@ impl Dialog {
         {
             inp.items = default_profiles(s);
         }
+        // Advanced: the extrude's direction is a vector (the profile normal unless one is given).
+        if id == "solid.extrude" && app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced {
+            use crate::specifier::{Class, Specifier, add};
+            add(app, &mut d, Specifier::new(Class::Vector, 0).optional());
+        }
         d.sync_thread(s);
         d.advance();
         Some(d)
@@ -801,7 +806,10 @@ impl Dialog {
 
     /// Make the first single input still empty (after the filled ones) active.
     fn advance(&mut self) {
-        if let Some(i) = self.inputs.iter().position(|i| i.items.is_empty()) {
+        // An input that may stay empty (a specifier with its default) is not the next one to fill.
+        let next =
+            (0..self.inputs.len()).find(|k| self.inputs.get(*k).is_some_and(|i| i.items.is_empty()) && !crate::specifier::is_optional(self, *k));
+        if let Some(i) = next {
             self.active = i;
         } else {
             self.active = self.active.min(self.inputs.len().saturating_sub(1));
@@ -2441,6 +2449,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 }
                 if crate::specifier::is_sketch(&d) {
                     enter |= sketch_specifier_rows(app, &mut d, ui);
+                } else if advanced && matches!(d.kind, Kind::Extrude { .. }) && !d.specs.is_empty() {
+                    enter |= crate::dialogs_extrude::rows(app, &mut d, ui);
                 } else {
                     input_rows(&mut d, ui, &app.session);
                 }
@@ -2469,6 +2479,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             ui.end_row();
                         }
                     }
+                    Kind::Extrude { .. } if advanced && !d.specs.is_empty() => {}
                     Kind::Extrude {
                         distance,
                         direction,
@@ -3289,7 +3300,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         && !matches!(d.kind, Kind::Params { .. } | Kind::Measure { .. } | Kind::Sketch)
         && ctx.input(|i| i.pointer.button_clicked(egui::PointerButton::Middle))
     {
-        match d.inputs.iter().position(|i| i.items.is_empty()) {
+        match (0..d.inputs.len()).find(|k| d.inputs.get(*k).is_some_and(|i| i.items.is_empty()) && !crate::specifier::is_optional(&d, *k)) {
             Some(next) => d.active = next,
             None if valid => ok = true,
             None => {}
@@ -3437,23 +3448,23 @@ pub(crate) fn roll_marker(app: &mut SolveApp, marker: Option<usize>) -> Result<(
 }
 
 /// The pick input an extent of To Object adds (a face, vertex or point to go to).
-const TO_OBJECT: &str = "To Object";
-const FROM_OBJECT: &str = "From Object";
+pub(crate) const TO_OBJECT: &str = "To Object";
+pub(crate) const FROM_OBJECT: &str = "From Object";
 
-fn object_on(inputs: &[SelInput], label: &str) -> bool {
+pub(crate) fn object_on(inputs: &[SelInput], label: &str) -> bool {
     inputs.iter().any(|i| i.label == label)
 }
 
-fn to_object_on(inputs: &[SelInput]) -> bool {
+pub(crate) fn to_object_on(inputs: &[SelInput]) -> bool {
     inputs.iter().any(|i| i.label == TO_OBJECT)
 }
 
 /// Add or remove the To Object input; the active input moves to it when it is added.
-fn set_to_object(inputs: &mut Vec<SelInput>, active: &mut usize, on: bool) {
+pub(crate) fn set_to_object(inputs: &mut Vec<SelInput>, active: &mut usize, on: bool) {
     set_object(inputs, active, TO_OBJECT, on);
 }
 
-fn set_object(inputs: &mut Vec<SelInput>, active: &mut usize, label: &'static str, on: bool) {
+pub(crate) fn set_object(inputs: &mut Vec<SelInput>, active: &mut usize, label: &'static str, on: bool) {
     if on && !object_on(inputs, label) {
         inputs.push(SelInput::new(label, FACES | selection::VERTICES, false));
         *active = inputs.len() - 1;
@@ -3982,6 +3993,9 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             ..
         } => {
             need(0, if *thin { "curves or profiles" } else { "profiles or a planar face" })?;
+            if !d.specs.is_empty() {
+                crate::dialogs_extrude::direction_sign(app, d)?;
+            }
             let mut common = json!({"distance": distance, "direction": DIRS.get(*direction).copied().unwrap_or("positive"), "operation": OPS.get(*operation).copied().unwrap_or("new")});
             let tapered = s.doc.eval(taper, ValueKind::Angle).map(|v| v.abs() > 1e-12).unwrap_or(!taper.trim().is_empty());
             if *direction == TWO_SIDES {
@@ -4650,7 +4664,7 @@ fn box_corner(s: &Session, fields: &[(&'static str, String)], p: Vec3, normal: O
 
 /// Switch an extrude's first input between profiles and faces, and (thin) profiles and curves;
 /// picks the other kind doesn't take are dropped.
-fn set_thin(inputs: &mut [SelInput], thin: bool) {
+pub(crate) fn set_thin(inputs: &mut [SelInput], thin: bool) {
     if let Some(input) = inputs.first_mut() {
         input.accept = if thin { THIN_ACCEPT } else { EXTRUDE_ACCEPT };
         input.label = if thin { "Profiles/Curves" } else { "Profiles" };

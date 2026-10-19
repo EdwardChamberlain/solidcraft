@@ -32,6 +32,7 @@ pub mod dialogs_appearance;
 pub mod dialogs_assembly;
 pub mod dialogs_coupling;
 pub mod dialogs_datum;
+pub mod dialogs_extrude;
 pub mod dialogs_library;
 pub mod dialogs_motion;
 pub mod dialogs_move;
@@ -110,6 +111,8 @@ mod apply_off_thread_tests;
 mod expression_complete;
 #[cfg(test)]
 mod extrude_edit_tests;
+#[cfg(test)]
+mod extrude_layout_tests;
 mod extrude_preview;
 mod file_load;
 mod file_picker;

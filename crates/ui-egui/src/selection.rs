@@ -47,11 +47,13 @@ pub struct SelInput {
     /// Many items (clicks toggle them), or one (a click replaces it).
     pub multi: bool,
     pub items: Vec<Sel>,
+    /// 0 for the dialog's own input; `n` for an input of its `n`th specifier (counting from 1).
+    pub owner: usize,
 }
 
 impl SelInput {
     pub fn new(label: &'static str, accept: Accept, multi: bool) -> SelInput {
-        SelInput { label, accept, multi, items: Vec::new() }
+        SelInput { label, accept, multi, items: Vec::new(), owner: 0 }
     }
 
     /// The selection a hit stands for, if this input accepts it.

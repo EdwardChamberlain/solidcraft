@@ -95,7 +95,7 @@ fn the_navigator_tabs_switch_the_pane_and_hide_it() {
 
 #[test]
 fn the_part_navigator_reports_a_features_parents_children_and_values() {
-    use crate::shell::part_nav::{children_of, facts};
+    use crate::shell::part_nav::facts;
     let mut h = advanced();
     h.app.run("sketch.create", json!({"plane":"XY","name":"Base"})).unwrap();
     h.app.run("sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[10,10]})).unwrap();
@@ -106,8 +106,8 @@ fn the_part_navigator_reports_a_features_parents_children_and_values() {
     let f = facts(&h.app, boss).unwrap();
     assert_eq!((f.name.as_str(), f.parents.as_slice()), ("Boss", &["Base".to_string()][..]));
     assert!(f.inputs.iter().any(|(_, e)| e == "10 mm"), "{:?}", f.inputs);
-    let (deleted, _) = children_of(&h.app, sketch);
-    assert!(deleted.contains(&"Boss".to_string()), "{deleted:?}");
+    let children = facts(&h.app, sketch).unwrap().children;
+    assert!(children.contains(&"Boss".to_string()), "{children:?}");
     // The panes draw for a selected feature without a panic.
     h.app.session.selection = vec![solidcraft_engine::Sel::Feature { id: boss }];
     h.frames(3);

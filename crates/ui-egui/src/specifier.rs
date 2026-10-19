@@ -43,6 +43,11 @@ pub struct Specifier {
     pub reverse: bool,
     /// Typed values: a point's coordinates, or the axis of a vector.
     pub values: Vec<String>,
+    /// Nothing picked is an answer (the dialog has a default): its inputs are not required.
+    pub optional: bool,
+    /// What the dialog last mirrored of this specifier (a dialog that keeps its own copy of
+    /// Reverse tells its own changes from the specifier's with it).
+    pub memo: Option<bool>,
     /// The datum dialog a plane that is made (an offset, an angle…) takes its value and commands
     /// from. Its own inputs are not used: the specifier's are the dialog's.
     inner: Option<Box<Dialog>>,
@@ -100,7 +105,13 @@ impl Specifier {
             Class::Point => vec!["0 mm".into(), "0 mm".into(), "0 mm".into()],
             _ => vec!["X".into()],
         };
-        Specifier { class, ty, count: 0, reverse: false, values, inner: None }
+        Specifier { class, ty, count: 0, reverse: false, values, optional: false, memo: None, inner: None }
+    }
+
+    /// The same specifier with its default being no pick at all.
+    pub fn optional(mut self) -> Specifier {
+        self.optional = true;
+        self
     }
 
     /// The typed value of a plane that is made (its distance, angle or position).
@@ -148,38 +159,41 @@ impl Specifier {
     }
 }
 
-/// Add the specifier to the dialog: its inputs go after the ones already there.
+/// Add the specifier to the dialog: its inputs go after the ones already there, tagged as its own
+/// so later inputs of the dialog (a To Object, say) never confuse them.
 pub fn add(app: &SolveApp, d: &mut Dialog, mut spec: Specifier) {
-    let inputs = spec.inputs(app);
+    let owner = d.specs.len() + 1;
+    let mut inputs = spec.inputs(app);
+    for input in &mut inputs {
+        input.owner = owner;
+    }
     spec.count = inputs.len();
     d.inputs.extend(inputs);
     d.specs.push(spec);
 }
 
-/// Where the specifier's inputs start in the dialog's.
-fn start_of(d: &Dialog, index: usize) -> usize {
-    d.specs.iter().take(index).map(|s| s.count).sum::<usize>() + d.inputs.len().saturating_sub(d.specs.iter().map(|s| s.count).sum::<usize>())
+/// The dialog's inputs that belong to specifier `index`.
+fn indices(d: &Dialog, index: usize) -> Vec<usize> {
+    d.inputs.iter().enumerate().filter(|(_, i)| i.owner == index + 1).map(|(k, _)| k).collect()
 }
 
-fn range_of(d: &Dialog, index: usize) -> std::ops::Range<usize> {
-    let start = start_of(d, index);
-    let count = d.specs.get(index).map_or(0, |s| s.count);
-    start..(start + count).min(d.inputs.len())
+fn inputs_of(d: &Dialog, index: usize) -> Vec<&SelInput> {
+    d.inputs.iter().filter(|i| i.owner == index + 1).collect()
 }
 
 fn picks(d: &Dialog, index: usize) -> Vec<&Sel> {
-    d.inputs.get(range_of(d, index)).unwrap_or_default().iter().flat_map(|i| i.items.iter()).collect()
+    inputs_of(d, index).into_iter().flat_map(|i| i.items.iter()).collect()
 }
 
 /// Change the way a specifier answers: its inputs are replaced, keeping the picks the new inputs
 /// can still use.
 fn set_type(app: &SolveApp, d: &mut Dialog, index: usize, ty: usize) {
-    let range = range_of(d, index);
     let Some(mut spec) = d.specs.get(index).cloned() else { return };
-    let old: Vec<Sel> = d.inputs.get(range.clone()).unwrap_or_default().iter().flat_map(|i| i.items.iter().cloned()).collect();
+    let owned = indices(d, index);
+    let old: Vec<Sel> = owned.iter().filter_map(|k| d.inputs.get(*k)).flat_map(|i| i.items.iter().cloned()).collect();
     spec.ty = ty;
     let mut inputs = spec.inputs(app);
-    let mut keep = old.into_iter();
+    let mut keep = old.clone().into_iter();
     for input in &mut inputs {
         if let Some(pick) = keep.next().filter(|s| dialogs::fits(input.accept, s)) {
             input.items = vec![pick];
@@ -187,17 +201,28 @@ fn set_type(app: &SolveApp, d: &mut Dialog, index: usize, ty: usize) {
     }
     if inputs.len() == 1 && inputs.first().is_some_and(|i| i.multi) {
         // Inferred takes every pick there was.
-        if let (Some(input), Some(prev)) = (inputs.first_mut(), d.inputs.get(range.clone())) {
-            input.items = prev.iter().flat_map(|i| i.items.iter().filter(|s| dialogs::fits(input.accept, s)).cloned()).collect();
+        if let Some(input) = inputs.first_mut() {
+            input.items = old.into_iter().filter(|s| dialogs::fits(input.accept, s)).collect();
         }
     }
+    for input in &mut inputs {
+        input.owner = index + 1;
+    }
     spec.count = inputs.len();
-    let at = range.start.min(d.inputs.len());
-    d.inputs.splice(range, inputs);
+    let at = owned.first().copied().unwrap_or(d.inputs.len());
+    let was_active = owned.contains(&d.active);
+    for k in owned.iter().rev() {
+        d.inputs.remove(*k);
+    }
+    for (n, input) in inputs.into_iter().enumerate() {
+        d.inputs.insert((at + n).min(d.inputs.len()), input);
+    }
     if let Some(slot) = d.specs.get_mut(index) {
         *slot = spec;
     }
-    d.active = at.min(d.inputs.len().saturating_sub(1));
+    if was_active || d.active >= d.inputs.len() {
+        d.active = at.min(d.inputs.len().saturating_sub(1));
+    }
 }
 
 /// Choose a way by its id (`"offset"`-style ids are the command ids for planes).
@@ -229,8 +254,9 @@ pub fn show(app: &SolveApp, d: &mut Dialog, ui: &mut Ui, index: usize, title: &s
     if ty != spec.ty {
         set_type(app, d, index, ty);
     }
-    let range = range_of(d, index);
-    dialogs::input_rows_range(d, ui, &app.session, range);
+    for k in indices(d, index) {
+        dialogs::input_rows_range(d, ui, &app.session, k..k + 1);
+    }
     let Some(mut spec) = d.specs.get(index).cloned() else { return enter };
     match (spec.class, spec.id()) {
         (Class::Plane, "inferred" | "plane") => {}
@@ -333,6 +359,12 @@ pub fn point(app: &SolveApp, d: &Dialog, index: usize) -> Result<Option<Vec3>, S
 /// The direction a Vector specifier stands for (Reverse applied), or `None` when nothing is
 /// specified.
 pub fn vector(app: &SolveApp, d: &Dialog, index: usize) -> Result<Option<Vec3>, String> {
+    let reverse = d.specs.get(index).is_some_and(|s| s.reverse);
+    Ok(vector_raw(app, d, index)?.map(|v| if reverse { -v } else { v }))
+}
+
+/// The direction before Reverse.
+pub fn vector_raw(app: &SolveApp, d: &Dialog, index: usize) -> Result<Option<Vec3>, String> {
     let spec = d.specs.get(index).ok_or("no such input")?;
     let items = picks(d, index);
     let dir = match spec.id() {
@@ -342,7 +374,7 @@ pub fn vector(app: &SolveApp, d: &Dialog, index: usize) -> Result<Option<Vec3>, 
             _ => Some(Vec3::X),
         },
         "points" => {
-            let inputs = d.inputs.get(range_of(d, index)).unwrap_or_default();
+            let inputs = inputs_of(d, index);
             let at = |i: usize| inputs.get(i).and_then(|inp| inp.items.first()).and_then(|s| point_of(app, s));
             match (at(0), at(1)) {
                 (Some(a), Some(b)) => Some((b - a).normalized().ok_or("the two points are the same")?),
@@ -363,7 +395,7 @@ pub fn vector(app: &SolveApp, d: &Dialog, index: usize) -> Result<Option<Vec3>, 
             None => return Err("select what gives the direction first".into()),
         },
     };
-    Ok(dir.map(|v| if spec.reverse { -v } else { v }))
+    Ok(dir)
 }
 
 /// What a Plane specifier makes: the commands to run first (datum planes made for it), the
@@ -418,7 +450,14 @@ pub fn plane(app: &SolveApp, d: &Dialog, index: usize) -> Result<PlaneOut, Strin
                 Some(inner) => inner.clone(),
                 None => Dialog::for_command(app, cmd).ok_or("that plane type is not available")?,
             };
-            tmp.inputs = d.inputs.get(range_of(d, index)).unwrap_or_default().to_vec();
+            tmp.inputs = inputs_of(d, index)
+                .into_iter()
+                .cloned()
+                .map(|mut i| {
+                    i.owner = 0;
+                    i
+                })
+                .collect();
             let commands = dialogs::apply_commands(app, &tmp)?;
             let (made_cmd, params) = commands.into_iter().next().ok_or("nothing to make")?;
             Ok(made(&made_cmd, params))
@@ -429,4 +468,9 @@ pub fn plane(app: &SolveApp, d: &Dialog, index: usize) -> Result<PlaneOut, Strin
 /// Is the dialog one whose specifiers decide a sketch (so Create Sketch's own rows apply)?
 pub fn is_sketch(d: &Dialog) -> bool {
     matches!(d.kind, Kind::Sketch) && !d.specs.is_empty()
+}
+
+/// Is input `k` of the dialog one that need not be picked?
+pub fn is_optional(d: &Dialog, k: usize) -> bool {
+    d.inputs.get(k).is_some_and(|i| i.owner > 0 && d.specs.get(i.owner - 1).is_some_and(|s| s.optional))
 }

@@ -24,12 +24,8 @@ fn plane(name: &str) -> Sel {
 
 fn pick(h: &mut Harness, spec: usize, sel: Sel) {
     let d = h.app.dialog.as_mut().unwrap();
-    let range = {
-        let before: usize = d.specs.iter().take(spec).map(|s| s.count).sum();
-        let base = d.inputs.len() - d.specs.iter().map(|s| s.count).sum::<usize>();
-        base + before..base + before + d.specs[spec].count
-    };
-    d.inputs[range.start].items = vec![sel];
+    let at = d.inputs.iter().position(|i| i.owner == spec + 1).expect("the specifier has an input");
+    d.inputs[at].items = vec![sel];
 }
 
 fn choose(h: &mut Harness, spec: usize, id: &str) {

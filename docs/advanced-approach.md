@@ -36,7 +36,9 @@ Dialogs keep SolidCraft's look and work the NX way: docked at the left, a **Type
 command has several methods, numbered selection steps, collapsible groups (Extrude: Limits, Draft,
 Boolean; Revolve: Limits, Boolean), and **OK / Apply / Cancel** with **Reset**. Apply makes the
 feature and starts the next one. A middle click moves to the next pick and confirms once every
-pick is made.
+pick is made. Dialogs that preview end with a **Preview** group: *Show result* turns the live
+result off and on (OK still makes the feature). A To Object or From Object extent takes a vertex or
+construction point, a face or an edge (the place picked).
 
 **Datums** are one dialog each (Plane, Axis, Point) with a Type row: *Inferred* (the method follows
 what you pick) and every construction method the engine has. Click a plane in the Origin rows to pick
@@ -68,6 +70,6 @@ is built and what is not yet.
   linking to it): the context is drawn but is not pickable.
 - A shared evaluation between a part open in a tab and the same part linked in an assembly.
 - Mates between faces of different parts (assemblies use joints).
-- A specify-point widget, a Preview group in dialogs, and groups for every dialog (Extrude and
-  Revolve have them).
+- Groups for every dialog (Extrude and Revolve have them), and a Specify Point that also takes a
+  sketch point (it takes a vertex or construction point, a face or an edge).
 - Drawings and direct face editing are out of scope for this approach.

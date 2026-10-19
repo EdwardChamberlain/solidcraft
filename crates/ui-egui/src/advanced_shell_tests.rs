@@ -319,3 +319,17 @@ fn a_new_part_asks_for_the_design_to_be_saved_first() {
     assert!(h.app.dialog.is_none(), "no dialog while there is nowhere to put the part");
     assert!(h.app.status.as_ref().is_some_and(|(text, _, error)| *error && text.contains("Save this design first")), "{:?}", h.app.status);
 }
+
+#[test]
+fn the_sketch_ribbon_shows_sketch_dimension_as_a_button_in_both_approaches() {
+    for approach in [ModellingApproach::Advanced, ModellingApproach::Classic] {
+        let mut h = Harness::new();
+        h.app.preferences.modelling_approach = approach;
+        h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+        h.frames(6);
+        assert!(h.widget("Sketch Dimension").is_some(), "{approach:?}: the dimension tool is on the Sketch ribbon");
+        h.step(&json!({"widget":"Sketch Dimension"})).unwrap();
+        h.frames(3);
+        assert_eq!(h.app.tool.as_ref().map(|t| t.cmd), Some("sketch.dimension"), "{approach:?}: the button starts the dimension tool");
+    }
+}

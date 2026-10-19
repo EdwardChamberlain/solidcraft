@@ -201,6 +201,9 @@ pub mod titlebar;
 pub mod toolbar;
 pub mod toolbar_custom;
 pub mod tools;
+pub mod tree_pick;
+#[cfg(test)]
+mod tree_pick_tests;
 pub mod update;
 pub mod viewport;
 mod viewport_layout;

@@ -821,6 +821,8 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
             crate::shell::part_nav_tree::toggle(app, *id);
         } else if response.clicked() && on_fold {
             crate::browser::toggle(app, &pattern_key, true);
+        } else if response.clicked() && crate::tree_pick::pick_feature(app, *id, advanced) {
+            // A dialog waiting for a pick took it: the feature is not also selected.
         } else if response.clicked() {
             select_item(app, ui, TimelineItem::Feature(*id), &order);
         }

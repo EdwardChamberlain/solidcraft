@@ -16,7 +16,10 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("body.rename", "Rename Body", rename_body).icon("rename").params("body: its name, name: the new name (features that use the body follow)"),
     CommandSpec::new("sketch.redefine", "Redefine Sketch Plane", redefine_sketch)
         .icon("plane")
-        .params("sketch: id or name; plane: as sketch.create; author_path?: exact owner occurrence ids; explicitly rebinds or freezes the plane while preserving geometry and dimension names"),
+        .params("sketch: id or name; plane: as sketch.create; reframe?: as sketch.create (the sketch's origin and x axis); author_path?: exact owner occurrence ids; explicitly rebinds or freezes the plane while preserving geometry and dimension names"),
+    CommandSpec::new("sketch.reattach", "Reattach Sketch", reattach_sketch)
+        .icon("plane")
+        .params("sketch?: id or name (default: the sketch being edited); plane: as sketch.create (a plane, datum plane or planar face); reframe?: {origin?, x_dir?, soft?} as sketch.create; the same as sketch.redefine, for the sketch being edited"),
     CommandSpec::new("browser.group", "New Group", group)
         .icon("folder")
         .params("folder: bodies|sketches|construction; component?: id (default 0); name?; items?: [keys] (they leave other groups)"),
@@ -671,6 +674,16 @@ fn rename_body(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"body": old, "name": name}))
 }
 
+/// `sketch.reattach`: `sketch.redefine`, of the sketch being edited unless one is named.
+fn reattach_sketch(s: &mut Session, p: &Value) -> Result<Value> {
+    let mut q = p.clone();
+    if q.get("sketch").is_none_or(Value::is_null) {
+        let id = s.active_sketch.ok_or_else(|| bad("sketch.reattach", "no sketch is being edited: name one with `sketch`"))?;
+        q["sketch"] = json!(id);
+    }
+    super::find_command("sketch.redefine").ok_or_else(|| bad("sketch.reattach", "sketch.redefine"))?.run_nested(s, &q)
+}
+
 fn redefine_sketch(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "sketch.redefine";
     let key = match p.get("sketch") {
@@ -708,7 +721,7 @@ fn redefine_sketch(s: &mut Session, p: &Value) -> Result<Value> {
             _ => None,
         })
         .cloned();
-    let plane = super::sketch::plane_ref(&trial, p, cmd)?;
+    let plane = super::sketch::reframed(p, super::sketch::plane_ref(&trial, p, cmd)?, cmd)?;
     if super::sketch::face::is_face(p) {
         super::sketch::face::capture_positions(&mut trial, &plane)?;
     }

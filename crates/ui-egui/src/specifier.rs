@@ -492,6 +492,7 @@ pub fn is_optional(d: &Dialog, k: usize) -> bool {
 /// there is to say; anything else waits for OK.
 pub fn starts_on_pick(app: &SolveApp, d: &Dialog) -> bool {
     is_sketch(d)
+        && d.origin.as_deref() != Some("sketch.reattach")
         && d.specs.get(1).is_some_and(Specifier::is_default)
         && d.specs.get(2).is_some_and(Specifier::is_default)
         && d.specs.first().is_some_and(|s| matches!(s.id(), "inferred" | "plane"))

@@ -476,6 +476,23 @@ impl Dialog {
         let s = &app.session;
         let has_bodies = !s.world_state().bodies.is_empty();
         let mut d = match id {
+            "sketch.reattach" => {
+                // The sketch being edited, or the one selected in the tree; its plane, direction
+                // and origin are the specifiers', left unspecified until one is given.
+                let sketch = s.active_sketch.or_else(|| {
+                    s.selection.iter().find_map(|sel| match sel {
+                        Sel::Feature { id } if s.doc.feature(*id).is_some_and(|f| matches!(f.kind, FeatureKind::Sketch { .. })) => Some(*id),
+                        _ => None,
+                    })
+                })?;
+                let mut d = Dialog::new(Kind::Sketch, Vec::new());
+                d.extra.insert("sketch".into(), json!(sketch));
+                use crate::specifier::{Class, Specifier, add};
+                add(app, &mut d, Specifier::new(Class::Plane, 0));
+                add(app, &mut d, Specifier::new(Class::Vector, 0));
+                add(app, &mut d, Specifier::new(Class::Point, 0));
+                d
+            }
             "sketch.create" if app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced => {
                 // The plane, the direction of its x axis and the origin, each named explicitly.
                 let mut d = Dialog::new(Kind::Sketch, Vec::new());
@@ -2333,6 +2350,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let raw_title = match d.origin.as_deref() {
         Some("solid.pattern.feature") => "PATTERN FEATURE",
         Some("solid.pattern.geometry") => "PATTERN GEOMETRY",
+        Some("sketch.reattach") => "REATTACH SKETCH",
         _ if advanced => crate::dialogs_datum::class_title(&d.kind).unwrap_or_else(|| title(&d.kind)),
         _ => title(&d.kind),
     };
@@ -3741,8 +3759,13 @@ pub(crate) fn sketch_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String,
     let plane = specifier::plane(app, d, 0)?;
     let direction = specifier::vector(app, d, 1)?;
     let origin = specifier::point(app, d, 2)?;
+    let reattach = d.origin.as_deref() == Some("sketch.reattach");
     let mut params = json!({ "plane": plane.plane });
-    if let Some(Sel::Plane { name }) = &plane.sel
+    if reattach {
+        params["sketch"] = d.extra.get("sketch").cloned().ok_or("no sketch to reattach")?;
+    }
+    if !reattach
+        && let Some(Sel::Plane { name }) = &plane.sel
         && direction.is_none()
         && let Some(flip) = flip_toward_viewer(app, name)
     {
@@ -3763,7 +3786,7 @@ pub(crate) fn sketch_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String,
         params["reframe"] = Value::Object(reframe);
     }
     let mut commands = plane.prefix;
-    commands.push(("sketch.create".to_string(), params));
+    commands.push((if reattach { "sketch.reattach" } else { "sketch.create" }.to_string(), params));
     Ok(commands)
 }
 
@@ -3880,6 +3903,14 @@ pub(crate) fn run_dialog(app: &mut SolveApp, d: &Dialog) -> Result<(), String> {
     // Saving asks for a file name first; `Err("")` is the user backing out of that.
     if let Kind::SaveMesh(k) = &d.kind {
         return crate::dialogs_save_mesh::run(app, k, &d.inputs);
+    }
+    if crate::specifier::is_sketch(d) && d.origin.as_deref() == Some("sketch.reattach") {
+        // The sketch stays open where it is: the view turns to face its new plane.
+        for (cmd, params) in sketch_commands(app, d)? {
+            app.run(&cmd, params).map_err(|error| crate::friendly_error(&cmd, &error))?;
+        }
+        look_at_sketch_again(app);
+        return Ok(());
     }
     if crate::specifier::is_sketch(d) {
         let commands = sketch_commands(app, d)?;

@@ -85,3 +85,25 @@ fn a_soft_direction_square_to_the_plane_keeps_the_planes_own_x() {
     run(&mut s, "sketch.create", json!({"plane":"XY","reframe":{"x_dir":[0.0,1.0,0.0],"soft":true}}));
     assert!(near(plane_of(&s).x, Vec3::Y));
 }
+
+#[test]
+fn reattach_moves_the_sketch_being_edited_to_another_plane_keeping_its_geometry() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane":"XY","name":"Base"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[10,5]}));
+    let curves = s.doc.sketch(1).unwrap().curves.len();
+    run(&mut s, "sketch.reattach", json!({"plane":"XZ"}));
+    let p = plane_of(&s);
+    assert!(near(p.normal(), solidcraft_geom::Plane::XZ.normal()), "now on XZ: {p:?}");
+    assert_eq!(s.doc.sketch(1).unwrap().curves.len(), curves, "the geometry stays");
+    assert!(s.active_sketch.is_some(), "still being edited");
+    // With a direction and an origin of its own.
+    run(&mut s, "sketch.reattach", json!({"plane":"XY","reframe":{"origin":[3.0,4.0,0.0],"x_dir":[0.0,1.0,0.0]}}));
+    let p = plane_of(&s);
+    assert!(near(p.origin, Vec3::new(3.0, 4.0, 0.0)) && near(p.x, Vec3::Y), "{p:?}");
+    // By name when none is being edited; an error says so when there is nothing to reattach.
+    run(&mut s, "sketch.finish", json!({}));
+    assert!(s.execute("sketch.reattach", &json!({"plane":"XZ"})).unwrap_err().to_string().contains("no sketch is being edited"));
+    run(&mut s, "sketch.reattach", json!({"sketch":"Base","plane":"XZ"}));
+    assert!(near(s.world_state().sketch(1).unwrap().plane.normal(), solidcraft_geom::Plane::XZ.normal()));
+}

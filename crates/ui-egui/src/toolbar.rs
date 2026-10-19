@@ -744,7 +744,22 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         let mut overflow = Vec::new();
         // Every panel with all its buttons (the user's pins have no cap); a toolbar too narrow
         // for them collapses panels into their drop-down, then into the » menu.
-        let lists: Vec<_> = crate::toolbar_custom::panel_lists(&tab)
+        let mut panels = crate::toolbar_custom::panel_lists(&tab);
+        if advanced && tab == "SKETCH" {
+            // Finish Sketch comes first, with Reattach Sketch beside it, as the way out of (and
+            // back into the plane of) the sketch.
+            if let Some(at) = panels.iter().position(|(panel, ..)| *panel == "FINISH SKETCH") {
+                let mut finish = panels.remove(at);
+                if let Some(reattach) = solidcraft_engine::find_command("sketch.reattach")
+                    && !finish.1.iter().any(|c| c.id == reattach.id)
+                {
+                    finish.1.push(reattach);
+                    finish.2 = finish.2.max(2);
+                }
+                panels.insert(0, finish);
+            }
+        }
+        let lists: Vec<_> = panels
             .into_iter()
             .map(|(panel, cmds, promote)| {
                 let shown = crate::toolbar_custom::buttons(app, &tab, panel, &cmds, promote);

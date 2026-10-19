@@ -4,7 +4,7 @@
 use solidcraft_geom::Vec2;
 
 use super::*;
-use crate::{CurveKind, Sketch};
+use crate::{CurveKind, Sketch, TextVAlign};
 
 fn v(x: f64, y: f64) -> Vec2 {
     Vec2::new(x, y)
@@ -171,6 +171,7 @@ fn a_style_is_saved_only_when_it_is_not_plain_and_reads_back() {
             bold: true,
             italic: true,
             align: TextAlign::Right,
+            valign: TextVAlign::Top,
             letter_spacing: -0.5,
             line_spacing: 1.5,
             path: Some("l3".into()),
@@ -180,6 +181,7 @@ fn a_style_is_saved_only_when_it_is_not_plain_and_reads_back() {
     };
     let json = serde_json::to_value(&styled).unwrap();
     assert_eq!(json["style"]["align"], "right");
+    assert_eq!(json["style"]["valign"], "top");
     assert_eq!(serde_json::from_value::<LinkSource>(json).unwrap(), styled);
     // Saved without a style (before styles): plain.
     let mut old = serde_json::to_value(&plain).unwrap();
@@ -194,4 +196,37 @@ fn on_a_closed_curve_left_alignment_starts_at_the_top() {
     let (lo, hi) = extent(&styled("START", &TextStyle { path: Some("c".into()), ..TextStyle::default() }, Some(&circle)));
     // It runs clockwise from the top: to the right of it, coming down.
     assert!(lo.x > -1.0 && hi.x > 10.0 && hi.y > r, "{lo:?} {hi:?}");
+}
+
+#[test]
+fn lines_align_to_the_anchor_by_baseline_top_middle_or_bottom() {
+    // Two lines of capitals 10 high; the lines are `gap` apart.
+    let at = |v: TextVAlign| extent(&styled("H\nH", &TextStyle { valign: v, ..TextStyle::default() }, None));
+    let base = at(TextVAlign::Baseline);
+    let gap = base.1.y - base.0.y - 10.0;
+    assert!(base.1.y > 9.9 && base.1.y < 10.1, "the first line stands on the anchor: {base:?}");
+    let top = at(TextVAlign::Top);
+    assert!(top.1.y.abs() < 0.05, "the top of the first line is at the anchor: {top:?}");
+    let bottom = at(TextVAlign::Bottom);
+    assert!(bottom.0.y.abs() < 0.05, "the last line's baseline is at the anchor: {bottom:?}");
+    let middle = at(TextVAlign::Middle);
+    assert!((middle.0.y + middle.1.y).abs() < 0.05, "centred on the anchor: {middle:?}");
+    // Moving up or down only: the block keeps its size and its columns.
+    for e in [top, middle, bottom] {
+        assert!(((e.1.y - e.0.y) - (base.1.y - base.0.y)).abs() < 1e-9 && (e.0.x - base.0.x).abs() < 1e-12, "{e:?} {gap}");
+    }
+    // One line: top and bottom differ by its height, middle is half of it.
+    let one = |v: TextVAlign| extent(&styled("H", &TextStyle { valign: v, ..TextStyle::default() }, None));
+    assert!((one(TextVAlign::Bottom).1.y - 10.0).abs() < 0.2 && (one(TextVAlign::Top).0.y + 10.0).abs() < 0.2);
+}
+
+#[test]
+fn the_default_vertical_alignment_is_not_saved() {
+    assert!(TextStyle::default().is_plain());
+    assert_eq!(serde_json::to_value(TextStyle::default()).unwrap(), serde_json::json!({}));
+    let style = TextStyle { valign: TextVAlign::Middle, ..TextStyle::default() };
+    let json = serde_json::to_value(&style).unwrap();
+    assert_eq!(json, serde_json::json!({"valign": "middle"}));
+    assert_eq!(serde_json::from_value::<TextStyle>(json).unwrap(), style);
+    assert!(!style.is_plain());
 }

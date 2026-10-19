@@ -367,3 +367,25 @@ fn pattern_feature_and_pattern_geometry_choose_their_layout_in_the_dialog() {
         h.app.dialog = None;
     }
 }
+
+#[test]
+fn finish_sketch_is_first_in_advanced_with_reattach_beside_it_and_last_in_classic() {
+    for approach in [ModellingApproach::Advanced, ModellingApproach::Classic] {
+        let mut h = Harness::new();
+        h.app.preferences.modelling_approach = approach;
+        h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+        h.frames(6);
+        let panel = |name: &str| rect_of(&format!("panel:SKETCH:{name}")).unwrap_or_else(|| panic!("{approach:?}: no {name} panel"));
+        let (finish, create) = (panel("FINISH SKETCH"), panel("CREATE"));
+        match approach {
+            ModellingApproach::Advanced => {
+                assert!(finish.right() <= create.left() + 1.0, "Finish Sketch is at the left: {finish:?} {create:?}");
+                assert!(finish.width() > 60.0, "two buttons: Finish Sketch and Reattach Sketch: {finish:?}");
+            }
+            _ => {
+                assert!(finish.left() >= create.right() - 1.0, "Classic keeps it at the right: {finish:?} {create:?}");
+                assert!(h.widget("Reattach Sketch").is_none());
+            }
+        }
+    }
+}

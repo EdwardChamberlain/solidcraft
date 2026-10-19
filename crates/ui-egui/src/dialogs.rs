@@ -125,6 +125,16 @@ pub enum Kind {
         t: String,
         sketch: Option<u64>,
     },
+    /// A datum whose method is picked from what is selected (`dialogs_datum::infer`).
+    DatumInferred {
+        class: crate::dialogs_datum::Class,
+        value: String,
+    },
+    /// A datum (plane, axis or point) by one of the methods in `dialogs_datum::METHODS`.
+    Datum {
+        method: usize,
+        value: String,
+    },
     /// Split a body by a plane.
     Split,
     /// Scale bodies uniformly.
@@ -242,6 +252,10 @@ pub enum Kind {
         operation: usize,
         keep_tools: bool,
     },
+    /// A part file made and linked in as a component (`component.new_part`).
+    NewPart {
+        name: String,
+    },
     Params {
         new_name: String,
         new_expr: String,
@@ -334,6 +348,10 @@ pub struct Dialog {
     pub refused: Option<Refused>,
     /// Create Sketch opened by a sketch tool's shortcut: that tool starts once the sketch is open.
     pub then_start: Option<&'static str>,
+    /// The command this dialog was started for (Apply and Reset start it afresh).
+    pub origin: Option<String>,
+    /// Apply was pressed: once the feature is in, a fresh dialog for `origin` replaces this one.
+    pub reopen: bool,
 }
 
 /// OK computing off the window thread: the dialog's commands evaluated on a scratch copy of the
@@ -407,7 +425,7 @@ impl Refused {
 }
 
 /// Can a selection go into an input that accepts `a`? (Planar-ness is checked when picking.)
-fn fits(a: Accept, s: &Sel) -> bool {
+pub(crate) fn fits(a: Accept, s: &Sel) -> bool {
     match s {
         Sel::Profile { .. } => a & PROFILES != 0,
         Sel::Edge { .. } => a & EDGES != 0,
@@ -445,6 +463,8 @@ impl Dialog {
             extra: serde_json::Map::new(),
             refused: None,
             then_start: None,
+            origin: None,
+            reopen: false,
         }
     }
 
@@ -536,6 +556,9 @@ impl Dialog {
                 Kind::AnglePlane { angle: "45 deg".into() },
                 vec![SelInput::new("Plane", PLANES, false), SelInput::new("Axis", AXES, false)],
             ),
+            c if app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced && crate::dialogs_datum::dialog(c).is_some() => {
+                crate::dialogs_datum::dialog(c)?
+            }
             "solid.split_body" => Dialog::new(
                 Kind::Split,
                 vec![SelInput::new("Body to split", BODIES, false), SelInput::new("Splitting tool", PLANES | FACES | AXES, false)],
@@ -554,14 +577,16 @@ impl Dialog {
                 Kind::Measure { result: None, of: Vec::new(), show: None },
                 vec![SelInput::new("Items", FACES | EDGES | selection::VERTICES | selection::CURVES | PROFILES, true)],
             ),
-            "solid.pattern.rectangular" => Dialog::new(
-                Kind::PatternRect { count: "3".into(), spacing: "20 mm".into(), count2: "1".into(), spacing2: "20 mm".into() },
-                vec![
-                    SelInput::new("Objects", BODIES, true),
-                    SelInput::new("Direction", AXES | EDGES, false),
-                    SelInput::new("Direction 2", AXES | EDGES, false),
-                ],
-            ),
+            "solid.pattern.rectangular" => {
+                Dialog::new(Kind::PatternRect { count: "3".into(), spacing: "20 mm".into(), count2: "1".into(), spacing2: "20 mm".into() }, {
+                    let vector = crate::dialogs_specify::accept(app);
+                    vec![
+                        SelInput::new("Objects", BODIES, true),
+                        SelInput::new("Direction", vector, false),
+                        SelInput::new("Direction 2", vector, false),
+                    ]
+                })
+            }
             "solid.pattern.circular" => Dialog::new(
                 Kind::PatternCirc { count: "6".into(), angle: "360 deg".into() },
                 vec![SelInput::new("Objects", BODIES, true), SelInput::new("Axis", AXES, false)],
@@ -628,6 +653,7 @@ impl Dialog {
                 Kind::Combine { operation: 1, keep_tools: false },
                 vec![SelInput::new("Target Body", BODIES, false), SelInput::new("Tool Bodies", BODIES, true)],
             ),
+            "component.new_part" => Dialog::new(Kind::NewPart { name: "Part".into() }, vec![]),
             "parameters.change" => Dialog::new(Kind::Params { new_name: String::new(), new_expr: String::new() }, vec![]),
             _ => {
                 let (kind, inputs) = crate::dialogs_assembly::start(app, id)
@@ -805,6 +831,8 @@ impl Dialog {
                 | Kind::Sweep { .. }
                 | Kind::PathPlane { .. }
                 | Kind::Midplane
+                | Kind::Datum { .. }
+                | Kind::DatumInferred { .. }
                 | Kind::Move { .. }
                 | Kind::Hole { .. }
                 | Kind::Primitive { .. }
@@ -844,6 +872,10 @@ impl Dialog {
             Kind::Section { offset, .. } => ("Distance", ValueKind::Length, offset),
             Kind::OffsetPlane { offset } => ("Distance", ValueKind::Length, offset),
             Kind::PathPlane { t, .. } => ("Position (0 to 1)", ValueKind::Unitless, t),
+            Kind::Datum { method, value } => {
+                let (_, label, _) = crate::dialogs_datum::METHODS.get(*method)?.value?;
+                (label, ValueKind::Unitless, value)
+            }
             Kind::Rib { thickness, .. } => ("Thickness", ValueKind::Length, thickness),
             Kind::Emboss { depth, .. } => ("Depth", ValueKind::Length, depth),
             Kind::PathPattern { spacing, .. } => ("Spacing", ValueKind::Length, spacing),
@@ -1411,6 +1443,16 @@ fn title(k: &Kind) -> &'static str {
         Kind::Material { .. } => "PHYSICAL MATERIAL",
         Kind::OffsetPlane { .. } => "OFFSET PLANE",
         Kind::Midplane => "MIDPLANE",
+        Kind::DatumInferred { class, .. } => match class {
+            crate::dialogs_datum::Class::Axis => "DATUM AXIS",
+            crate::dialogs_datum::Class::Point => "DATUM POINT",
+            crate::dialogs_datum::Class::Plane => "DATUM PLANE",
+        },
+        Kind::Datum { method, .. } => match crate::dialogs_datum::METHODS.get(*method).map(|m| m.class) {
+            Some(crate::dialogs_datum::Class::Axis) => "DATUM AXIS",
+            Some(crate::dialogs_datum::Class::Point) => "DATUM POINT",
+            _ => "DATUM PLANE",
+        },
         Kind::PathPlane { .. } => "PLANE ALONG PATH",
         Kind::Rib { web: false, .. } => "RIB",
         Kind::Rib { web: true, .. } => "WEB",
@@ -1443,6 +1485,7 @@ fn title(k: &Kind) -> &'static str {
         },
         Kind::Combine { .. } => "COMBINE",
         Kind::Params { .. } => "PARAMETERS",
+        Kind::NewPart { .. } => "NEW PART COMPONENT",
         Kind::EditParam { .. } => "EDIT DIMENSION",
         Kind::Rename { .. } => "RENAME",
         Kind::ConfirmDelete { .. } => "DELETE FEATURE",
@@ -1486,6 +1529,40 @@ fn hint(inp: &SelInput) -> &'static str {
 const LABEL_W: f32 = 92.0;
 /// The label column grows to fit its labels up to this, then long labels wrap.
 const LABEL_MAX_W: f32 = 150.0;
+
+/// A collapsible group's header row in the dialog grid (Advanced dialogs); the caller draws the
+/// group's rows only when this returns true. `open` is the state the first time it shows, and
+/// the choice is kept per group for the session.
+pub(crate) fn section(ui: &mut egui::Ui, id: &str, title: &str, open: bool) -> bool {
+    let key = egui::Id::new(("sc_dialog_group", id));
+    let mut now = ui.data_mut(|d| *d.get_temp_mut_or(key, open));
+    let t = Tokens::get();
+    let mut clicked = false;
+    let mut centre = egui::Pos2::ZERO;
+    ui.horizontal(|ui| {
+        // The arrow is drawn: the interface font has no triangle glyphs.
+        let (rect, arrow) = ui.allocate_exact_size(vec2(14.0, 16.0), egui::Sense::click());
+        let c = rect.center();
+        let points = if now {
+            vec![c + vec2(-4.0, -2.5), c + vec2(4.0, -2.5), c + vec2(0.0, 3.0)]
+        } else {
+            vec![c + vec2(-2.5, -4.0), c + vec2(3.0, 0.0), c + vec2(-2.5, 4.0)]
+        };
+        ui.painter().add(egui::Shape::convex_polygon(points, t.text_dim, Stroke::NONE));
+        let text = RichText::new(tr(title)).strong().size(12.0);
+        let label = ui.add(egui::Label::new(text).selectable(false).sense(egui::Sense::click()));
+        centre = label.rect.center();
+        clicked = arrow.clicked() || label.clicked();
+    });
+    crate::scenario::publish_handle(&format!("dialog:group:{id}"), centre);
+    if clicked {
+        now = !now;
+        ui.data_mut(|d| d.insert_temp(key, now));
+    }
+    ui.label("");
+    ui.end_row();
+    now
+}
 
 /// A row label in the dialog's label column (the grid sizes the column to its widest label).
 pub(crate) fn row_label(ui: &mut egui::Ui, text: &str) {
@@ -1588,7 +1665,7 @@ fn object_type_row(d: &mut Dialog, ui: &mut egui::Ui) {
 
 /// Rows above the selection inputs: the pattern type and object type, the Hole placement (one
 /// face point, or sketch points).
-fn placement_row(d: &mut Dialog, ui: &mut egui::Ui) {
+fn placement_row(d: &mut Dialog, ui: &mut egui::Ui, vector: Accept) {
     if matches!(d.kind, Kind::Mirror) {
         object_type_row(d, ui);
         return;
@@ -1616,8 +1693,8 @@ fn placement_row(d: &mut Dialog, ui: &mut egui::Ui) {
                     Kind::PatternRect { count: "3".into(), spacing: "20 mm".into(), count2: "1".into(), spacing2: "20 mm".into() },
                     vec![
                         SelInput::new("Objects", BODIES, true),
-                        SelInput::new("Direction", AXES | EDGES, false),
-                        SelInput::new("Direction 2", AXES | EDGES, false),
+                        SelInput::new("Direction", vector, false),
+                        SelInput::new("Direction 2", vector, false),
                     ],
                 ),
                 1 => (
@@ -1784,7 +1861,7 @@ fn rectangular_pattern_rows(d: &mut Dialog, ui: &mut egui::Ui, session: &Session
         ui.label(tr("dialog.selection_guidance"));
         egui::Grid::new("pattern_source").spacing(vec2(10.0, 8.0)).show(ui, |ui| {
             if matches!(d.kind, Kind::PatternRect { .. }) {
-                placement_row(d, ui);
+                placement_row(d, ui, AXES | EDGES);
             }
             input_rows_range(d, ui, session, 0..1);
         });
@@ -2201,7 +2278,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let top = (vp.top() + crate::viewport::AXIS_VIEW_CLEARANCE).min((vp.bottom() - 360.0).max(vp.top()));
     // The Sketch Palette owns the right edge for as long as a sketch is being edited. A dialog
     // started there docks at the left instead, so neither panel hides the other.
-    let side = if crate::sketch_palette::editing(app) && crate::sketch_palette::fits_beside_a_dialog(app, ctx) {
+    let advanced = app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced;
+    let side = if advanced || crate::sketch_palette::editing(app) && crate::sketch_palette::fits_beside_a_dialog(app, ctx) {
         crate::frame::Side::Left
     } else {
         crate::frame::Side::Right
@@ -2215,11 +2293,13 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let mut ok = false;
     let mut applied = false;
     let mut cancel = false;
+    let mut reset = false;
     let mut enter = false;
     let wide = d.is_wide();
     let pattern_columns = matches!(d.kind, Kind::SketchModify(crate::sketch_modify_ui::Mod::PatternRect { .. }))
         || (matches!(d.kind, Kind::PatternRect { .. }) && d.inputs.first().is_some_and(|i| i.accept == selection::FEATURES));
-    let raw_title = title(&d.kind);
+    // Advanced: every datum dialog is "Datum Plane/Axis/Point", whatever its Type.
+    let raw_title = if advanced { crate::dialogs_datum::class_title(&d.kind).unwrap_or_else(|| title(&d.kind)) } else { title(&d.kind) };
     let heading = if d.editing.is_some() { crate::i18n::format("dialog.edit_title", &[("title", tr(raw_title))]) } else { tr(raw_title).to_string() };
     let frame = crate::frame::dock_frame(ctx, side);
     // The area includes the border as well as the inner margins; reserve all of it so a
@@ -2236,6 +2316,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         }
         _ => !has_ok || !d.previews() || (built.unwrap_or_else(|| apply_commands(app, &d).is_ok()) && app.preview.error.is_none()),
     };
+    // Advanced: Apply runs the command and starts the next one; Reset starts this one afresh.
+    let stepwise = advanced && has_ok && d.editing.is_none() && d.origin.is_some();
     let width = if wide { crate::frame::Width::Wide } else { crate::frame::Width::Normal };
     let wkey = egui::Id::new(("sc_dialog_w", wide));
     let response = crate::frame::docked_on(
@@ -2322,9 +2404,13 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 if matches!(&d.kind, Kind::Motion(crate::dialogs_motion::Mo::Configurations { .. })) {
                     return;
                 }
-                placement_row(&mut d, ui);
+                placement_row(&mut d, ui, crate::dialogs_specify::accept(app));
+                if advanced {
+                    crate::dialogs_datum::type_row(app, &mut d, ui);
+                }
                 if matches!(&d.kind, Kind::SketchModify(k) if k.previews())
                     || matches!(d.kind, Kind::Mirror | Kind::PatternRect { .. } | Kind::PatternCirc { .. } | Kind::PathPattern { .. })
+                    || (advanced && d.inputs.len() > 1 && d.editing.is_none())
                 {
                     row_label(ui, "dialog.step");
                     let label = d.active_input().map(|input| tr(input.label)).unwrap_or_else(|| tr("Objects"));
@@ -2398,73 +2484,75 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                                 ui.end_row();
                             }
                         }
-                        row_label(ui, "Start");
-                        let old = if object_on(&d.inputs, FROM_OBJECT) { 2 } else { usize::from(!start.is_empty()) };
-                        let mut st = old;
-                        combo(ui, "ex_start", &["Profile Plane", "Offset", "From Object"], &mut st);
-                        if st != old {
-                            set_object(&mut d.inputs, &mut d.active, FROM_OBJECT, st == 2);
-                            if st == 1 && start.is_empty() {
-                                *start = "5 mm".into();
+                        if !advanced || section(ui, "extrude_limits", "Limits", true) {
+                            row_label(ui, "Start");
+                            let old = if object_on(&d.inputs, FROM_OBJECT) { 2 } else { usize::from(!start.is_empty()) };
+                            let mut st = old;
+                            combo(ui, "ex_start", &["Profile Plane", "Offset", "From Object"], &mut st);
+                            if st != old {
+                                set_object(&mut d.inputs, &mut d.active, FROM_OBJECT, st == 2);
+                                if st == 1 && start.is_empty() {
+                                    *start = "5 mm".into();
+                                }
+                                if st == 0 {
+                                    start.clear();
+                                }
                             }
-                            if st == 0 {
-                                start.clear();
-                            }
-                        }
-                        ui.end_row();
-                        if st != 0 {
-                            row_label(ui, "Offset");
-                            enter |= field(ui, start);
                             ui.end_row();
-                        }
-                        row_label(ui, "Direction");
-                        // One Side, Two Sides, Symmetric (a flip is a negative distance).
-                        let order = [0usize, TWO_SIDES, 2];
-                        let mut pos = order.iter().position(|o| o == direction).unwrap_or(0);
-                        combo(ui, "ex_dir", &["One Side", "Two Sides", "Symmetric"], &mut pos);
-                        if pos != order.iter().position(|o| o == direction).unwrap_or(0) {
-                            *direction = order.get(pos).copied().unwrap_or(0);
-                            // Selecting Symmetric applies the current total-distance semantics.
-                            d.extra.insert("convention".into(), json!(solidcraft_engine::doc::ExtrudeConvention::TotalDistance));
-                            // An explicit direction ends the automatic choices (#1257).
-                            smart.manual_dir = true;
-                            *auto_op = false;
-                        }
-                        ui.end_row();
-                        if *direction < 2 {
-                            row_label(ui, "Reverse");
-                            let mut reverse = *direction == 1;
-                            if ui.checkbox(&mut reverse, tr("Reverse Direction")).changed() {
-                                *direction = usize::from(reverse);
+                            if st != 0 {
+                                row_label(ui, "Offset");
+                                enter |= field(ui, start);
+                                ui.end_row();
+                            }
+                            row_label(ui, "Direction");
+                            // One Side, Two Sides, Symmetric (a flip is a negative distance).
+                            let order = [0usize, TWO_SIDES, 2];
+                            let mut pos = order.iter().position(|o| o == direction).unwrap_or(0);
+                            combo(ui, "ex_dir", &["One Side", "Two Sides", "Symmetric"], &mut pos);
+                            if pos != order.iter().position(|o| o == direction).unwrap_or(0) {
+                                *direction = order.get(pos).copied().unwrap_or(0);
+                                // Selecting Symmetric applies the current total-distance semantics.
+                                d.extra.insert("convention".into(), json!(solidcraft_engine::doc::ExtrudeConvention::TotalDistance));
                                 // An explicit direction ends the automatic choices (#1257).
                                 smart.manual_dir = true;
                                 *auto_op = false;
                             }
                             ui.end_row();
-                        }
-                        row_label(ui, "Extent Type");
-                        let cur = if to_object_on(&d.inputs) { 1 } else { usize::from(*all) * 2 };
-                        let mut ext = cur;
-                        combo(ui, "ex_ext", &["Distance", "To Object", "All"], &mut ext);
-                        *all = ext == 2;
-                        set_to_object(&mut d.inputs, &mut d.active, ext == 1);
-                        ui.end_row();
-                        if ext == 0 {
-                            row_label(ui, "Distance");
-                            enter |= field(ui, distance);
+                            if *direction < 2 {
+                                row_label(ui, "Reverse");
+                                let mut reverse = *direction == 1;
+                                if ui.checkbox(&mut reverse, tr("Reverse Direction")).changed() {
+                                    *direction = usize::from(reverse);
+                                    // An explicit direction ends the automatic choices (#1257).
+                                    smart.manual_dir = true;
+                                    *auto_op = false;
+                                }
+                                ui.end_row();
+                            }
+                            row_label(ui, "Extent Type");
+                            let cur = if to_object_on(&d.inputs) { 1 } else { usize::from(*all) * 2 };
+                            let mut ext = cur;
+                            combo(ui, "ex_ext", &["Distance", "To Object", "All"], &mut ext);
+                            *all = ext == 2;
+                            set_to_object(&mut d.inputs, &mut d.active, ext == 1);
                             ui.end_row();
-                            if *direction == TWO_SIDES {
-                                row_label(ui, "Distance 2");
-                                enter |= field(ui, distance2);
+                            if ext == 0 {
+                                row_label(ui, "Distance");
+                                enter |= field(ui, distance);
+                                ui.end_row();
+                                if *direction == TWO_SIDES {
+                                    row_label(ui, "Distance 2");
+                                    enter |= field(ui, distance2);
+                                    ui.end_row();
+                                }
+                            }
+                            if ext == 1 {
+                                row_label(ui, "To Offset");
+                                enter |= field(ui, to_offset);
                                 ui.end_row();
                             }
                         }
-                        if ext == 1 {
-                            row_label(ui, "To Offset");
-                            enter |= field(ui, to_offset);
-                            ui.end_row();
-                        }
-                        if *direction < 2 {
+                        if *direction < 2 && (!advanced || section(ui, "extrude_draft", "Draft", *taper_present)) {
                             row_label(ui, "Taper Angle");
                             let before = taper.clone();
                             enter |= field(ui, taper);
@@ -2473,60 +2561,66 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             }
                             ui.end_row();
                         }
-                        row_label(ui, "Operation");
-                        let before = *operation;
-                        combo(ui, "ex_op", &OP_LABELS, operation);
-                        // A choice made by hand sticks.
-                        if *operation != before {
-                            *auto_op = false;
+                        if !advanced || section(ui, "extrude_boolean", "Boolean", true) {
+                            row_label(ui, "Operation");
+                            let before = *operation;
+                            combo(ui, "ex_op", &OP_LABELS, operation);
+                            // A choice made by hand sticks.
+                            if *operation != before {
+                                *auto_op = false;
+                            }
+                            ui.end_row();
                         }
-                        ui.end_row();
                     }
                     Kind::Revolve { angle, operation, .. } => {
-                        row_label(ui, "Type");
-                        let cur = usize::from(to_object_on(&d.inputs));
-                        let mut ty = cur;
-                        combo(ui, "rv_type", &["Angle", "To Object"], &mut ty);
-                        set_to_object(&mut d.inputs, &mut d.active, ty == 1);
-                        ui.end_row();
-                        if ty == 0 {
-                            // One Side, Two Sides (a second angle), Symmetric (the angle split).
-                            row_label(ui, "Direction");
-                            let cur = if d.extra.contains_key("angle2") {
-                                1
-                            } else if d.extra.get("direction").is_some() {
-                                2
-                            } else {
-                                0
-                            };
-                            let mut dir = cur;
-                            combo(ui, "rv_dir", &["One Side", "Two Sides", "Symmetric"], &mut dir);
-                            if dir != cur {
-                                d.extra.remove("angle2");
-                                d.extra.remove("direction");
-                                match dir {
-                                    1 => {
-                                        d.extra.insert("angle2".into(), json!("90 deg"));
+                        if !advanced || section(ui, "revolve_limits", "Limits", true) {
+                            row_label(ui, "Type");
+                            let cur = usize::from(to_object_on(&d.inputs));
+                            let mut ty = cur;
+                            combo(ui, "rv_type", &["Angle", "To Object"], &mut ty);
+                            set_to_object(&mut d.inputs, &mut d.active, ty == 1);
+                            ui.end_row();
+                            if ty == 0 {
+                                // One Side, Two Sides (a second angle), Symmetric (the angle split).
+                                row_label(ui, "Direction");
+                                let cur = if d.extra.contains_key("angle2") {
+                                    1
+                                } else if d.extra.get("direction").is_some() {
+                                    2
+                                } else {
+                                    0
+                                };
+                                let mut dir = cur;
+                                combo(ui, "rv_dir", &["One Side", "Two Sides", "Symmetric"], &mut dir);
+                                if dir != cur {
+                                    d.extra.remove("angle2");
+                                    d.extra.remove("direction");
+                                    match dir {
+                                        1 => {
+                                            d.extra.insert("angle2".into(), json!("90 deg"));
+                                        }
+                                        2 => {
+                                            d.extra.insert("direction".into(), json!("symmetric"));
+                                        }
+                                        _ => {}
                                     }
-                                    2 => {
-                                        d.extra.insert("direction".into(), json!("symmetric"));
-                                    }
-                                    _ => {}
+                                }
+                                ui.end_row();
+                                row_label(ui, "Angle");
+                                enter |= field(ui, angle);
+                                ui.end_row();
+                                if dir == 1 {
+                                    row_label(ui, "Angle 2");
+                                    enter |= extra_field(ui, &mut d.extra, "angle2", "90 deg");
+                                    ui.end_row();
                                 }
                             }
-                            ui.end_row();
-                            row_label(ui, "Angle");
-                            enter |= field(ui, angle);
-                            ui.end_row();
-                            if dir == 1 {
-                                row_label(ui, "Angle 2");
-                                enter |= extra_field(ui, &mut d.extra, "angle2", "90 deg");
-                                ui.end_row();
-                            }
                         }
-                        row_label(ui, "Operation");
-                        combo(ui, "rv_op", &OP_LABELS, operation);
-                        ui.end_row();
+                        if !advanced || section(ui, "revolve_boolean", "Boolean", true) {
+                            row_label(ui, "Operation");
+                            combo(ui, "rv_op", &OP_LABELS, operation);
+                            ui.end_row();
+                        }
                     }
                     Kind::Fillet { radius, chamfer, chain, ctype, distance2, angle, flip } => {
                         if *chamfer {
@@ -2726,6 +2820,16 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     Kind::PathPlane { t, .. } => {
                         row_label(ui, "Position (0 to 1)");
                         enter |= field(ui, t);
+                        ui.end_row();
+                    }
+                    Kind::Datum { method, value } => enter |= crate::dialogs_datum::value_row(ui, *method, value),
+                    Kind::DatumInferred { class, value } => {
+                        let picked = d.inputs.first().map_or(0, |i| i.items.len());
+                        enter |= crate::dialogs_datum::inferred_value_row(ui, *class, picked, value);
+                    }
+                    Kind::NewPart { name } => {
+                        row_label(ui, "Part name");
+                        enter |= field(ui, name);
                         ui.end_row();
                     }
                     Kind::Split | Kind::ReplaceFace | Kind::Remove | Kind::Midplane => {}
@@ -3084,7 +3188,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 (galley.size().x + 2.0 * ui.spacing().button_padding.x).max(64.0)
             };
             let (ok_width, close_width) = (button_width(label), button_width(close));
-            let buttons = close_width + if has_ok { ok_width + ui.spacing().item_spacing.x } else { 0.0 };
+            let (apply_label, reset_label) = (tr("Apply"), tr("Reset"));
+            let (apply_width, reset_width) = (button_width(apply_label), button_width(reset_label));
+            let extra = if stepwise { apply_width + reset_width + 2.0 * ui.spacing().item_spacing.x } else { 0.0 };
+            let buttons = close_width + extra + if has_ok { ok_width + ui.spacing().item_spacing.x } else { 0.0 };
             crate::frame::right_aligned(ui, total, buttons, |ui| {
                 if has_ok {
                     let b = egui::Button::new(RichText::new(label).color(if valid { Color32::WHITE } else { t.text_dim }))
@@ -3095,6 +3202,22 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     crate::scenario::publish_handle(&format!("dialog:{raw_label}"), r.rect.center());
                     if r.clicked() {
                         ok = true;
+                    }
+                }
+                if stepwise {
+                    let r = ui.add_enabled(
+                        valid && app.applying.is_none(),
+                        egui::Button::new(apply_label).wrap_mode(egui::TextWrapMode::Extend).min_size(vec2(apply_width, 24.0)),
+                    );
+                    crate::scenario::publish_handle("dialog:Apply", r.rect.center());
+                    if r.clicked() {
+                        ok = true;
+                        d.reopen = true;
+                    }
+                    let r = ui.add(egui::Button::new(reset_label).wrap_mode(egui::TextWrapMode::Extend).min_size(vec2(reset_width, 24.0)));
+                    crate::scenario::publish_handle("dialog:Reset", r.rect.center());
+                    if r.clicked() {
+                        reset = true;
                     }
                 }
                 if ui.add(egui::Button::new(close).wrap_mode(egui::TextWrapMode::Extend).min_size(vec2(close_width, 24.0))).clicked() {
@@ -3118,6 +3241,21 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let report_active = app.issue_report.draft.is_some();
     if !report_active && enter_applies && app.applying.is_none() && (enter || canvas_enter || (enter_free && nothing_focused)) {
         ok = true;
+    }
+    // Advanced: a middle click (not a drag) goes to the next pick that is still empty, and
+    // confirms once every pick is made.
+    if advanced
+        && !report_active
+        && app.applying.is_none()
+        && has_ok
+        && !matches!(d.kind, Kind::Params { .. } | Kind::Measure { .. } | Kind::Sketch)
+        && ctx.input(|i| i.pointer.button_clicked(egui::PointerButton::Middle))
+    {
+        match d.inputs.iter().position(|i| i.items.is_empty()) {
+            Some(next) => d.active = next,
+            None if valid => ok = true,
+            None => {}
+        }
     }
     if !report_active && esc && !app.esc_handled {
         app.esc_handled = true;
@@ -3176,6 +3314,25 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 Err(e) => d.refuse(app, e),
             },
         }
+    }
+    // Apply (Advanced): the feature is in; the next one starts from the same command. OK and
+    // Cancel never reach here with `reopen` set, so they close the dialog as before.
+    if applied && d.reopen {
+        let fresh = d.origin.clone().and_then(|id| Dialog::for_command(app, &id).map(|nd| (id, nd)));
+        if let Some((id, mut nd)) = fresh {
+            nd.origin = Some(id);
+            d = nd;
+            cancel = false;
+            applied = false;
+        }
+    }
+    if reset
+        && let Some(id) = d.origin.clone()
+        && let Some(mut nd) = Dialog::for_command(app, &id)
+    {
+        nd.origin = Some(id);
+        d = nd;
+        app.applying = None;
     }
     // Cancel while computing: the result goes (its worker runs on to its end).
     if cancel && !applied {
@@ -3940,7 +4097,11 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             need(0, "objects")?;
             let kept = d.extra.get("dir1").and_then(|v| serde_json::from_value::<[f64; 3]>(v.clone()).ok()).map(|a| Vec3::new(a[0], a[1], a[2]));
             let d1 = match (sels(d, 1).first(), kept) {
-                (Some(x), _) => axis_of(app, x).ok_or("the direction must be an axis, a sketch line or a straight edge")?.1,
+                (Some(x), _) => {
+                    crate::dialogs_specify::vector_of(app, x)
+                        .ok_or("the direction must be an axis, a sketch line, a straight edge or a planar face")?
+                        .1
+                }
                 (None, Some(k)) => k,
                 (None, None) => return Err("select a direction (an axis, a sketch line or a straight edge) first".into()),
             };
@@ -3948,7 +4109,11 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             pattern_objects(s, sels(d, 0), &mut p);
             let kept2 = d.extra.get("dir2").and_then(|v| serde_json::from_value::<[f64; 3]>(v.clone()).ok()).map(|a| Vec3::new(a[0], a[1], a[2]));
             let d2 = match sels(d, 2).first() {
-                Some(x) => Some(axis_of(app, x).ok_or("the second direction must be an axis, a sketch line or a straight edge")?.1),
+                Some(x) => Some(
+                    crate::dialogs_specify::vector_of(app, x)
+                        .ok_or("the second direction must be an axis, a sketch line, a straight edge or a planar face")?
+                        .1,
+                ),
                 None => kept2,
             };
             if let Some(d2) = d2 {
@@ -4001,6 +4166,9 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             crate::dialogs_sweep::params(app, opts, sels(d, 2).first(), [sels(d, 3), sels(d, 4)], &mut p)?;
             ("solid.sweep", p)
         }
+        Kind::Datum { .. } => crate::dialogs_datum::command(app, d)?,
+        Kind::DatumInferred { .. } => crate::dialogs_datum::infer(app, d)?,
+        Kind::NewPart { name } => ("component.new_part", json!({"name": name.trim()})),
         Kind::OffsetPlane { offset } => {
             need(0, "a plane")?;
             let base = plane_arg(app, sels(d, 0).first())?;
@@ -4598,6 +4766,25 @@ pub(crate) fn face_sel(s: &Session, p0: Vec3) -> Option<Sel> {
     best.filter(|(d, _)| *d < 1e-3 + 1e-6 * p0.len()).map(|x| x.1)
 }
 
+/// The model vertex at `p0`, as a dialog pick.
+pub(crate) fn vertex_sel(s: &Session, p0: Vec3) -> Option<Sel> {
+    let st = s.world_state();
+    let frames = stored_frames(s);
+    let mut best: Option<(f64, Sel)> = None;
+    for b in &st.bodies {
+        let p = stored_on(&frames, &b.name, p0);
+        for e in b.mesh().edges.iter() {
+            for end in [e.first(), e.last()].into_iter().flatten() {
+                let d = p.dist(*end);
+                if best.as_ref().is_none_or(|(bd, _)| d < *bd) {
+                    best = Some((d, Sel::Vertex { body: b.name.clone(), point: *end }));
+                }
+            }
+        }
+    }
+    best.filter(|(d, _)| *d < 1e-3 + 1e-6 * p0.len()).map(|x| x.1)
+}
+
 fn emboss_face_sel(s: &Session, component: u64, face: &solidcraft_engine::doc::EmbossFace, persistent: &str) -> Option<Sel> {
     let source = s.model.state();
     let body = source.body(&face.body)?;
@@ -4611,7 +4798,7 @@ fn emboss_face_sel(s: &Session, component: u64, face: &solidcraft_engine::doc::E
 }
 
 /// A picked plane or planar face as `construct.plane.*` takes it.
-fn plane_arg(app: &SolveApp, sel: Option<&Sel>) -> Result<Value, String> {
+pub(crate) fn plane_arg(app: &SolveApp, sel: Option<&Sel>) -> Result<Value, String> {
     match sel {
         Some(Sel::Plane { name }) => Ok(json!(name)),
         Some(face @ Sel::Face { .. }) => crate::sketch_attachment_ui::face_plane(app, face).ok_or("the picked face is no longer in the model".into()),
@@ -4673,6 +4860,12 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
     let st = s.world_state();
     let start = |cmd: &str| Dialog::for_command(app, cmd);
     let mut d = match &f.kind {
+        FeatureKind::ConstructionAxis { .. } | FeatureKind::ConstructionPoint { .. } | FeatureKind::ConstructionPlane { .. }
+            if app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced
+                && let Some(d) = crate::dialogs_datum::refill(app, &f.kind) =>
+        {
+            d
+        }
         FeatureKind::Extrude { sketch, profiles, extent, operation, targets, thin } => {
             let mut d = start("solid.extrude")?;
             d.kind = Kind::Extrude {

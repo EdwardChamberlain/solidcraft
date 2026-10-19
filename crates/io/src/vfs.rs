@@ -115,7 +115,146 @@ mod imp {
     }
 }
 
-pub use imp::*;
+#[cfg(target_arch = "wasm32")]
+pub use imp::{insert, list, take_writes};
+
+/// Where designs live. Natively that is the disk and in the browser a map the host fills
+/// ([`LocalStore`], what every file call here uses unless a store is installed), but a design is
+/// only a path and some bytes: a host that keeps parts in a PDM system, a database or a remote
+/// folder implements this and installs it ([`with_store`] for the calling thread,
+/// [`set_default_store`] for every thread). Linked parts, opening and saving then all go through
+/// it. The folders an agent may use ([`PathScope`]) are still checked first.
+pub trait DesignStore: Send + Sync {
+    /// At most `max` bytes of the file at `path`.
+    fn read(&self, path: &str, max: usize) -> Result<Vec<u8>>;
+    fn write(&self, path: &str, bytes: &[u8]) -> Result<()>;
+    fn len(&self, path: &str) -> Result<u64>;
+    fn exists(&self, path: &str) -> bool;
+    fn remove(&self, path: &str) -> Result<()>;
+    /// A folder and the folders above it, where the store has folders.
+    fn create_dir_all(&self, path: &str) -> Result<()>;
+}
+
+/// The disk (natively) or the browser's in-memory files: what the file calls use by default.
+pub struct LocalStore;
+
+impl DesignStore for LocalStore {
+    fn read(&self, path: &str, max: usize) -> Result<Vec<u8>> {
+        imp::read(path, max)
+    }
+    fn write(&self, path: &str, bytes: &[u8]) -> Result<()> {
+        imp::write(path, bytes)
+    }
+    fn len(&self, path: &str) -> Result<u64> {
+        imp::len(path)
+    }
+    fn exists(&self, path: &str) -> bool {
+        imp::exists(path)
+    }
+    fn remove(&self, path: &str) -> Result<()> {
+        imp::remove(path)
+    }
+    fn create_dir_all(&self, path: &str) -> Result<()> {
+        imp::create_dir_all(path)
+    }
+}
+
+type SharedStore = std::sync::Arc<dyn DesignStore>;
+
+static DEFAULT_STORE: std::sync::RwLock<Option<SharedStore>> = std::sync::RwLock::new(None);
+
+thread_local! {
+    static STORE: std::cell::RefCell<Option<SharedStore>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Every thread without a store of its own uses this one (`None`: the local store again).
+pub fn set_default_store(store: Option<std::sync::Arc<dyn DesignStore>>) {
+    if let Ok(mut slot) = DEFAULT_STORE.write() {
+        *slot = store;
+    }
+}
+
+/// Run `f` with `store` answering every file call made on this thread.
+pub fn with_store<R>(store: std::sync::Arc<dyn DesignStore>, f: impl FnOnce() -> R) -> R {
+    struct Restore(Option<SharedStore>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            STORE.with(|s| *s.borrow_mut() = self.0.take());
+        }
+    }
+    let _restore = Restore(STORE.with(|s| s.borrow_mut().replace(store)));
+    f()
+}
+
+/// The installed store, if any (this thread's first, then the default).
+fn installed() -> Option<SharedStore> {
+    STORE.with(|s| s.borrow().clone()).or_else(|| DEFAULT_STORE.read().ok().and_then(|d| d.clone()))
+}
+
+/// Whether files go somewhere other than the local store (so a save must not write the disk
+/// directly).
+pub fn has_custom_store() -> bool {
+    installed().is_some()
+}
+
+/// At most `max` bytes of the file at `path`.
+pub fn read(path: &str, max: usize) -> Result<Vec<u8>> {
+    match installed() {
+        Some(store) => {
+            check(path)?;
+            store.read(path, max)
+        }
+        None => imp::read(path, max),
+    }
+}
+
+pub fn write(path: &str, bytes: &[u8]) -> Result<()> {
+    match installed() {
+        Some(store) => {
+            check(path)?;
+            store.write(path, bytes)
+        }
+        None => imp::write(path, bytes),
+    }
+}
+
+pub fn len(path: &str) -> Result<u64> {
+    match installed() {
+        Some(store) => {
+            check(path)?;
+            store.len(path)
+        }
+        None => imp::len(path),
+    }
+}
+
+pub fn exists(path: &str) -> bool {
+    match installed() {
+        Some(store) => check(path).is_ok() && store.exists(path),
+        None => imp::exists(path),
+    }
+}
+
+pub fn remove(path: &str) -> Result<()> {
+    match installed() {
+        Some(store) => {
+            check(path)?;
+            store.remove(path)
+        }
+        None => imp::remove(path),
+    }
+}
+
+/// A folder and the folders above it, where missing.
+pub fn create_dir_all(path: &str) -> Result<()> {
+    match installed() {
+        Some(store) => {
+            check(path)?;
+            store.create_dir_all(path)
+        }
+        None => imp::create_dir_all(path),
+    }
+}
 
 /// The folders an agent's commands may read, write and delete in (an MCP server's, see
 /// docs/mcp.md). While a scope is active on this thread ([`scoped`]), every file call here

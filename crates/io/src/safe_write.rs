@@ -137,8 +137,9 @@ fn write_steps(path: &Path, bytes: &[u8], backup: bool, stop: Option<Step>) -> s
 /// crash reports) write through this without a [`crate::vfs::PathScope`]; a command writing a
 /// path it was given calls [`crate::vfs::check`] first, which judges where the link leads.
 pub fn write_atomic(path: &Path, bytes: &[u8], backup: bool) -> std::io::Result<()> {
-    // In the browser the host stores files (one write is already atomic there).
-    if cfg!(target_arch = "wasm32") {
+    // In the browser, and with a store installed, the host stores files (one write is already
+    // atomic there).
+    if cfg!(target_arch = "wasm32") || crate::vfs::has_custom_store() {
         let _ = backup;
         return crate::vfs::write(&path.to_string_lossy(), bytes);
     }

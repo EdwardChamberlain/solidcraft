@@ -115,10 +115,14 @@ fn lost_attachment_ghost_rebind_preview_cancel_apply_and_undo_preserve_sketch() 
     let repaired = h.app.session.doc.to_json();
     let path = h.dir.join("rebound-face.solidcraft");
     h.app.run("file.save", json!({"path":path})).unwrap();
-    // Saving the untitled design names it after its file; everything else is exact.
+    // Saving the untitled design names it after its file and gives it its identity; everything
+    // else is exact.
+    let id = h.app.session.doc.id.clone();
+    assert_eq!(id.len(), 32);
     let named = |doc: &str| {
         let mut doc = solidcraft_engine::doc::Document::from_json(doc).unwrap();
         doc.name = "rebound-face".into();
+        doc.id = id.clone();
         doc.to_json()
     };
     h.app.run("edit.undo", json!({})).unwrap();

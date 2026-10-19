@@ -9,6 +9,10 @@
 #![forbid(unsafe_code)]
 
 pub mod access;
+#[cfg(test)]
+mod advanced_dialog_tests;
+#[cfg(test)]
+mod advanced_shell_tests;
 pub mod agent_chat;
 pub mod agent_cursor;
 pub mod browser;
@@ -27,6 +31,7 @@ pub mod dialogs;
 pub mod dialogs_appearance;
 pub mod dialogs_assembly;
 pub mod dialogs_coupling;
+pub mod dialogs_datum;
 pub mod dialogs_library;
 pub mod dialogs_motion;
 pub mod dialogs_move;
@@ -34,6 +39,7 @@ pub mod dialogs_parts;
 pub mod dialogs_plastic;
 pub mod dialogs_save_mesh;
 pub mod dialogs_sheet;
+pub mod dialogs_specify;
 pub mod dialogs_surface;
 pub mod dialogs_sweep;
 mod dialogs_thread;
@@ -138,6 +144,7 @@ mod revolve_manipulator_tests;
 pub mod scenario;
 pub mod select_other;
 pub mod selection;
+pub mod shell;
 #[cfg(test)]
 mod shell_face_sketch_ui_tests;
 pub mod shortcut_box;
@@ -672,6 +679,9 @@ impl SolveApp {
                     // `file.new` starts from millimetres. Units of new designs still apply (#1205).
                     prefs::apply_new_design(self);
                 }
+                if matches!(id, "doc.open" | "doc.recover") {
+                    self.adopt_document_approach();
+                }
                 if matches!(id, "file.new" | "doc.open" | "doc.recover") {
                     render_workspace::reset_document(self);
                     self.sketch_choices = sketch_families::Choices::default();
@@ -704,7 +714,8 @@ impl SolveApp {
         if self.session.active_sketch.is_some() && self.ui.tab != "SKETCH" {
             self.ui.tab = "SKETCH".into();
         } else if self.session.active_sketch.is_none() && self.ui.tab == "SKETCH" {
-            self.ui.tab = "SOLID".into();
+            self.ui.tab =
+                if self.preferences.modelling_approach == prefs::ModellingApproach::Advanced { workspace::ADVANCED_TABS[0] } else { "SOLID" }.into();
             self.tool = None;
         }
         r
@@ -753,6 +764,11 @@ impl SolveApp {
         self.home.open = false;
         if let Some(ext) = id.strip_prefix("sketch.insert_").filter(|e| matches!(*e, "dxf" | "svg")) {
             self.pick_open_command(id, json!({}), &[ext]);
+            return;
+        }
+        if id == "component.new_part" && self.session.path.is_none() {
+            // The part is made beside this design, so it needs a place first.
+            self.set_status(self.tr("ui.save_before_new_part").to_string(), true);
             return;
         }
         if id == "component.insert_design" {
@@ -862,7 +878,8 @@ impl SolveApp {
             self.set_status(tools::hint(id), false);
             return;
         }
-        if let Some(d) = dialogs::Dialog::for_command(self, id) {
+        if let Some(mut d) = dialogs::Dialog::for_command(self, id) {
+            d.origin = Some(id.to_string());
             // The pre-selection now belongs to the dialog's inputs.
             if d.wants_picks() && !self.session.selection.is_empty() {
                 let _ = self.session.execute("select.clear", &json!({}));
@@ -996,6 +1013,28 @@ impl SolveApp {
 
     pub fn set_status(&mut self, s: impl Into<String>, error: bool) {
         self.status = Some((s.into(), now_ms(), error));
+    }
+
+    /// A design made in the other modelling approach switches the window to that approach: files
+    /// are not converted between approaches, so the design is shown the way it was made. An
+    /// Advanced design's linked parts are read again, so it opens up to date with them.
+    fn adopt_document_approach(&mut self) {
+        let wanted = prefs::ModellingApproach::of_document(self.session.doc.approach);
+        if wanted != self.preferences.modelling_approach {
+            self.preferences.modelling_approach = wanted;
+            self.set_status(self.tr_label("Switched to this design's modelling approach").to_string(), false);
+        }
+        if wanted == prefs::ModellingApproach::Advanced && !self.session.doc.links.is_empty() {
+            match documents::with_open(self, |app| app.session.execute("component.update_links", &json!({}))) {
+                Ok(v) => {
+                    let updated = v.get("updated").and_then(Value::as_array).map_or(0, Vec::len);
+                    if updated > 0 {
+                        self.set_status(i18n::format("ui.parts_updated", &[("count", &updated.to_string())]), false);
+                    }
+                }
+                Err(e) => self.set_status(e.to_string(), true),
+            }
+        }
     }
 
     pub fn open_path(&mut self, path: &str) {
@@ -1380,41 +1419,7 @@ impl SolveApp {
                 return;
             }
         }
-        toolbar::toolbar(self, ui);
-        let show_timeline = self.ui.show_timeline && !render_workspace::active(self);
-        let left_timeline = show_timeline && self.preferences.timeline_left;
-        if show_timeline && !left_timeline {
-            timeline::timeline(self, ui);
-        }
-        palette::palette_bar(self, ui);
-        // A floating browser keeps the workspace the whole width: it is drawn over the view below.
-        let browser_float = self.ui.show_browser && self.preferences.browser_float;
-        if self.ui.show_browser && !browser_float {
-            if left_timeline {
-                browser::browser_below_timeline(self, ui);
-            } else {
-                browser::browser(self, ui);
-            }
-        } else if left_timeline {
-            timeline_left::left_panel(self, ui);
-        }
-        if render_workspace::active(self) {
-            render_workspace::panel(self, ui);
-        }
-        agent_chat::show(self, ui);
-        preview::update(self, ui.ctx());
-        if browser_float {
-            // The room the central view is about to take, before it takes it.
-            let viewport = ui.available_rect_before_wrap();
-            browser::floating(self, ui, viewport);
-        }
-        egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
-            if render_workspace::active(self) {
-                render_workspace::show(self, ui);
-            } else {
-                viewport::show(self, ui);
-            }
-        });
+        shell::show(self, ui);
         dialogs::show(self, ui.ctx());
         issue_report::CadInput::block(self, ui, report_input);
         sketch_palette::show(self, ui.ctx());

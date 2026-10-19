@@ -639,6 +639,13 @@ fn export_as(app: &mut SolveApp, ext: &str, format: Option<&str>) {
 pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     let sketching = app.session.active_sketch.is_some();
+    let advanced = app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced;
+    // A tab the other approach left selected has no panels here: start from the first.
+    if advanced && !crate::workspace::ADVANCED_TABS.contains(&app.ui.tab.as_str()) && !matches!(app.ui.tab.as_str(), "SKETCH" | "RENDER") {
+        app.ui.tab = crate::workspace::ADVANCED_TABS[0].into();
+    } else if !advanced && crate::workspace::ADVANCED_TABS.contains(&app.ui.tab.as_str()) {
+        app.ui.tab = "SOLID".into();
+    }
     egui::Panel::top("sc_toolbar").exact_size(92.0).frame(egui::Frame::NONE.fill(t.toolbar)).show(ui, |ui| {
         let r = ui.max_rect();
         let painter = ui.painter().clone();
@@ -684,6 +691,8 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         }
         if crate::render_workspace::active(app) {
             tabs.push("RENDER");
+        } else if advanced {
+            tabs.extend(crate::workspace::ADVANCED_TABS.iter());
         } else {
             tabs.extend(TABS.iter());
         }
@@ -1335,7 +1344,7 @@ fn drag_ghost(ctx: &egui::Context, id: &str, at: egui::Pos2, removing: bool) {
 }
 
 /// The SELECT panel: what a click in the view picks.
-fn selection_filter(app: &mut SolveApp, ui: &mut egui::Ui) {
+pub(crate) fn selection_filter(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     ui.label(egui::RichText::new(crate::i18n::tr_label("Selection filter")).color(t.text_dim).size(11.0));
     ui.checkbox(&mut app.ui.pick_bodies, crate::i18n::tr_label("Select bodies (a face picks its body)"));

@@ -211,6 +211,28 @@ impl Harness {
         self.output = out.platform_output;
     }
 
+    /// One frame in which the middle button is pressed and released in place (a click, not a
+    /// drag), the pointer at the middle of the window.
+    pub fn middle_click(&mut self) {
+        self.time += 1.0 / 60.0;
+        let at = (self.size * 0.5).to_pos2();
+        let button = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Middle, pressed, modifiers: egui::Modifiers::NONE };
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, self.size)),
+            time: Some(self.time),
+            focused: true,
+            events: vec![egui::Event::PointerMoved(at), button(true), button(false)],
+            ..Default::default()
+        };
+        let app = &mut self.app;
+        let mut out = self.ctx.run_ui(raw, |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        });
+        out.textures_delta.clear();
+        self.output = out.platform_output;
+    }
+
     pub fn frames(&mut self, n: usize) {
         for _ in 0..n {
             self.frame();

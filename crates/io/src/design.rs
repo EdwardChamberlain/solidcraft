@@ -511,24 +511,29 @@ pub(super) fn read(bytes: &[u8]) -> Result<Document> {
 /// authoritative blob hydration. Desktop keeps one seekable file handle instead
 /// of buffering the complete archive. JSON continues through the normal migrations.
 pub fn read_design_file(path: &str, notify: Option<impl FnOnce(DesignPreview)>) -> Result<Document> {
+    // A store other than the disk hands over the bytes; the disk is read through one handle.
     #[cfg(not(target_arch = "wasm32"))]
-    let mut source = {
-        crate::vfs::check(path).map_err(invalid)?;
-        let metadata = std::fs::metadata(path).map_err(invalid)?;
-        if !metadata.is_file() {
-            return Err(invalid("not a regular file"));
+    {
+        if !crate::vfs::has_custom_store() {
+            crate::vfs::check(path).map_err(invalid)?;
+            let metadata = std::fs::metadata(path).map_err(invalid)?;
+            if !metadata.is_file() {
+                return Err(invalid("not a regular file"));
+            }
+            if metadata.len() > MAX_DESIGN_BYTES as u64 {
+                return Err(invalid("file too large"));
+            }
+            let file = std::fs::File::open(path).map_err(invalid)?;
+            if !file.metadata().map_err(invalid)?.is_file() {
+                return Err(invalid("not a regular file"));
+            }
+            return read_design_from(file, notify);
         }
-        if metadata.len() > MAX_DESIGN_BYTES as u64 {
-            return Err(invalid("file too large"));
-        }
-        let file = std::fs::File::open(path).map_err(invalid)?;
-        if !file.metadata().map_err(invalid)?.is_file() {
-            return Err(invalid("not a regular file"));
-        }
-        file
-    };
-    #[cfg(target_arch = "wasm32")]
-    let mut source = Cursor::new(crate::vfs::read(path, MAX_DESIGN_BYTES).map_err(invalid)?);
+    }
+    read_design_from(Cursor::new(crate::vfs::read(path, MAX_DESIGN_BYTES).map_err(invalid)?), notify)
+}
+
+fn read_design_from<R: Read + Seek>(mut source: R, notify: Option<impl FnOnce(DesignPreview)>) -> Result<Document> {
     let size = source.seek(SeekFrom::End(0)).map_err(invalid)?;
     if size > MAX_DESIGN_BYTES as u64 {
         return Err(invalid("file too large"));

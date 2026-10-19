@@ -13,7 +13,8 @@ pub const BIG_OPERATION_MS: f64 = 1500.0;
 pub fn tick(app: &mut SolveApp) {
     let big = std::mem::take(&mut app.big_operation);
     let Some(a) = app.autosave.as_mut() else { return };
-    if let Err(e) = a.tick(&app.session, big) {
+    let (sessions, active) = crate::documents::open_sessions(&app.docs, &app.session);
+    if let Err(e) = a.tick_all(&sessions, active, big) {
         let msg = format!("autosave failed: {e}");
         if app.status.as_ref().is_none_or(|(s, _, _)| *s != msg) {
             app.set_status(msg, true);
@@ -35,7 +36,8 @@ pub fn start(app: &mut SolveApp, dir: &std::path::Path, interval: std::time::Dur
 /// The app is closing: keep unsaved work for the next launch, drop everything else.
 pub fn close(app: &mut SolveApp) {
     if let Some(a) = app.autosave.take() {
-        a.close(&app.session);
+        let (sessions, active) = crate::documents::open_sessions(&app.docs, &app.session);
+        a.close_all(&sessions, active);
     }
 }
 

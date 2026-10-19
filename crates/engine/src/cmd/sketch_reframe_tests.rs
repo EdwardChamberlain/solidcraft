@@ -71,3 +71,17 @@ fn a_reframed_sketch_stays_attached_and_keeps_its_frame_through_save_and_reload(
     let doc: solidcraft_doc::Document = serde_json::from_str(&json).unwrap();
     assert_eq!(serde_json::to_string(&doc).unwrap(), json, "the reframed plane survives a round trip");
 }
+
+#[test]
+fn a_soft_direction_square_to_the_plane_keeps_the_planes_own_x() {
+    let mut s = Session::default();
+    // The x axis is the YZ plane's normal: strict refuses it, soft keeps the plane's own x.
+    assert!(s.execute("sketch.create", &json!({"plane":"YZ","reframe":{"x_dir":[1.0,0.0,0.0]}})).is_err());
+    run(&mut s, "sketch.create", json!({"plane":"YZ","reframe":{"x_dir":[1.0,0.0,0.0],"origin":[4.0,5.0,6.0],"soft":true}}));
+    let p = plane_of(&s);
+    assert!(near(p.x, solidcraft_geom::Plane::YZ.x), "{p:?}");
+    assert!(near(p.origin, Vec3::new(0.0, 5.0, 6.0)), "the origin still moves: {p:?}");
+    // On a plane it does suit, soft changes nothing.
+    run(&mut s, "sketch.create", json!({"plane":"XY","reframe":{"x_dir":[0.0,1.0,0.0],"soft":true}}));
+    assert!(near(plane_of(&s).x, Vec3::Y));
+}

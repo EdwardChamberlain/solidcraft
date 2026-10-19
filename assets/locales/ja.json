@@ -1415,6 +1415,8 @@
   "ui.parts_updated": "リンクされたパート {count} 件を更新しました",
   "ui.paste": "貼り付け",
   "ui.path": "パス",
+  "ui.pattern_feature": "フィーチャのパターン",
+  "ui.pattern_geometry": "ジオメトリのパターン",
   "ui.pattern_on_path": "パス上のパターン",
   "ui.perpendicular": "直交",
   "ui.perspective_view": "パースペクティブ表示",

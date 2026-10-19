@@ -104,7 +104,8 @@ const ADVANCED_DATUM: &[&str] = &[
     "construct.point.along_path",
 ];
 
-const ADVANCED_PATTERN: &[&str] = &["solid.pattern.rectangular", "solid.pattern.circular", "solid.pattern.path", "solid.mirror"];
+const ADVANCED_PATTERN: &[&str] =
+    &["solid.pattern.feature", "solid.pattern.geometry", "solid.mirror", "solid.pattern.rectangular", "solid.pattern.circular", "solid.pattern.path"];
 
 const ADVANCED_COMPONENT: &[&str] =
     &["component.new_part", "component.insert_design", "component.activate", "component.update_links", "component.break_link"];

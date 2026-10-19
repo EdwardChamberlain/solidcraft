@@ -333,3 +333,37 @@ fn the_sketch_ribbon_shows_sketch_dimension_as_a_button_in_both_approaches() {
         assert_eq!(h.app.tool.as_ref().map(|t| t.cmd), Some("sketch.dimension"), "{approach:?}: the button starts the dimension tool");
     }
 }
+
+#[test]
+fn the_pattern_panel_offers_pattern_feature_pattern_geometry_and_mirror() {
+    let mut h = advanced();
+    h.frames(6);
+    for button in ["Pattern Feature", "Pattern Geometry", "Mirror"] {
+        assert!(h.widget(button).is_some(), "{button} is a button on the Home ribbon");
+    }
+}
+
+#[test]
+fn pattern_feature_and_pattern_geometry_choose_their_layout_in_the_dialog() {
+    use crate::dialogs::Kind;
+    use crate::selection::{BODIES, FEATURES};
+    let mut h = advanced();
+    for (command, accept, title) in [("solid.pattern.feature", FEATURES, "PATTERN FEATURE"), ("solid.pattern.geometry", BODIES, "PATTERN GEOMETRY")] {
+        h.app.start(command);
+        h.frames(4);
+        assert!(h.widget(title).is_some() || h.widget("Layout").is_some(), "{command}: its heading and a Layout row");
+        let d = h.app.dialog.as_ref().unwrap();
+        assert_eq!(d.inputs[0].accept, accept, "{command}: what it repeats is fixed by the command");
+        assert!(matches!(d.kind, Kind::PatternRect { .. }), "Linear to start with");
+        assert!(h.widget("Object Type").is_none(), "no object type row: the command says it");
+        assert!(h.widget("Step").is_none() && h.widget("dialog.step").is_none(), "no step help");
+        // Layout: Circular keeps what is repeated.
+        h.step(&json!({"click":{"handle":"dialog:Layout"}})).unwrap();
+        h.step(&json!({"click":{"handle":"dialog:Layout:Circular"}})).unwrap();
+        h.frames(4);
+        let d = h.app.dialog.as_ref().unwrap();
+        assert!(matches!(d.kind, Kind::PatternCirc { .. }));
+        assert_eq!(d.inputs[0].accept, accept, "{command}: still what it was");
+        h.app.dialog = None;
+    }
+}

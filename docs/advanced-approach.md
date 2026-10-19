@@ -35,7 +35,7 @@ still in use.
 Dialogs keep SolidCraft's look and work the NX way: docked at the left, a **Type** row first when a
 command has several methods, numbered selection steps, collapsible groups (Extrude: Section, Direction, Limits, Offset, Draft, Boolean; Revolve: Limits, Boolean; Hole: Position, Form and Dimensions, Limits; Fillet and Chamfer: Radius or Offsets, Settings), and **OK / Apply / Cancel** with **Reset**. Apply makes the
 feature and starts the next one. A middle click moves to the next pick and confirms once every
-pick is made. **Extrude** is laid out the way the feature is described: Section, a Direction (a Specify Vector: the profile normal unless one is given, with Reverse; a direction across the normal is not supported yet), Limits with a **Start** (Value, Value (Other Side), Symmetric Value, Until Selected) and an **End** (Value, Until Selected, Through All), and an **Offset** (None, Symmetric, Inside, Outside, Two-Sided) that is the wall "thin" is in Classic. The End distance is measured from the Start, as the command's distance is. Dialogs that preview end with a **Preview** group: *Show result* turns the live
+pick is made. **Extrude** is laid out the way the feature is described: Section, a Direction (a Specify Vector: the profile normal unless one is given, with Reverse; a direction across the normal is not supported yet), Limits with a **Start** (Value, Value (Other Side), Symmetric Value, Until Selected) and an **End** (Value, Until Selected, Through All), and an **Offset** (None, Symmetric, Inside, Outside, Two-Sided) that is the wall "thin" is in Classic. The End distance is measured from the Start, as the command's distance is. **Patterns** are split by what they repeat, as the ribbon's Pattern panel shows: **Pattern Feature** (features, picked in the tree) and **Pattern Geometry** (bodies), each with a **Layout** in the dialog (Linear, Circular, Along Path); **Mirror** sits beside them. `solid.pattern.feature` and `solid.pattern.geometry` take a `layout` and hand the rest to the layout's own command. The dialogs have no step commentary. Dialogs that preview end with a **Preview** group: *Show result* turns the live
 result off and on (OK still makes the feature). A To Object or From Object extent takes a vertex or
 construction point, a face or an edge (the place picked).
 
@@ -52,9 +52,12 @@ explicit ways after it:
 A specifier's picks are inputs of its dialog (so the viewport sends clicks as it always does) and
 what it makes is plain data the commands already take. **Create Sketch** is built on three of them:
 the **Plane**, the **Reference Direction** (the sketch's x axis; Reverse flips it) and the **Sketch
-Origin** (the workpiece origin projected onto the plane, or any point). It waits for OK; the
-sketch stays attached to its plane, with `sketch.create`'s `reframe` (`origin`, `x_dir`) holding the
-direction and origin. Other dialogs take a specifier by `specifier::add`, read it with
+Origin** (the workpiece origin projected onto the plane, or any point). The direction starts at
+the x axis and the origin at the workpiece origin, so **clicking the plane is all it takes**: with
+both left at their defaults the click starts the sketch (an x axis square to the plane leaves the
+plane's own x). Change the direction or origin, or make the plane (an offset, a bisector…), and the
+dialog waits for OK. The sketch stays attached to its plane, with `sketch.create`'s `reframe`
+(`origin`, `x_dir`, `soft`) holding the direction and origin. Other dialogs take a specifier by `specifier::add`, read it with
 `specifier::plane`/`vector`/`point` and draw it with `specifier::show`; Create Sketch is the first,
 and the pickers the other dialogs have today (Mirror and Draft planes, pattern directions and axes,
 Revolve's axis) move onto them one at a time.

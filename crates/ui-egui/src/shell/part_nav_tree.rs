@@ -93,6 +93,12 @@ pub fn related(app: &SolveApp, id: u64) -> Related {
     }
 }
 
+/// The bodies feature `id` made or changed that are still in the design, by name.
+pub fn bodies_of(app: &SolveApp, id: u64) -> Vec<String> {
+    let world = app.session.world_state();
+    graph(app).touched.get(&id).into_iter().flatten().filter(|b| world.body(b).is_some()).cloned().collect()
+}
+
 /// The names of the parents and the children of a feature, in the order of the tree.
 pub fn names_of(app: &SolveApp, id: u64) -> (Vec<String>, Vec<String>) {
     let r = related(app, id);

@@ -66,6 +66,16 @@ pub enum PlaneRef {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         about_y: bool,
     },
+    /// `base` with its in-plane axes chosen: the sketch x axis along `x_dir` (projected into the
+    /// plane) and the origin at `origin` (projected onto it). Either is left as the base has it
+    /// when absent. A sketch placed with a reference direction or an origin of its own.
+    Reframed {
+        base: Box<PlaneRef>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<Vec3>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        x_dir: Option<Vec3>,
+    },
     /// Halfway between two planes (or planar faces); bisecting them when they meet at an angle.
     Midplane { a: Box<GeoRef>, b: Box<GeoRef> },
     /// Through two straight edges (lines) that lie in one plane.
@@ -3194,6 +3204,10 @@ impl Document {
                 Plane::new(o, rot(b.x), rot(b.y)).ok_or_else(|| DocError::Invalid("degenerate plane".into()))
             }
             PlaneRef::Flipped { base, about_y } => Ok(self.resolve_plane_in(vals, base, depth + 1, st)?.flipped(*about_y)),
+            PlaneRef::Reframed { base, origin, x_dir } => self
+                .resolve_plane_in(vals, base, depth + 1, st)?
+                .reframed(*origin, *x_dir)
+                .ok_or_else(|| DocError::Invalid("the sketch direction must lie along the plane, not square to it".into())),
             PlaneRef::Construction { name } => {
                 // Evaluated already: as it came out.
                 if let Some(c) = st.and_then(|st| st.construct.iter().find(|c| &c.name == name))

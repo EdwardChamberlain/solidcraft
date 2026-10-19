@@ -40,6 +40,26 @@ pick is made. Dialogs that preview end with a **Preview** group: *Show result* t
 result off and on (OK still makes the feature). A To Object or From Object extent takes a vertex or
 construction point, a face or an edge (the place picked).
 
+**Specifiers** are the plane, vector and point inputs every Advanced dialog shares (`specifier.rs`).
+Each has a **Type** that starts at *Inferred* (pick what you have and the way follows) and lists the
+explicit ways after it:
+
+| Specifier | Types |
+|---|---|
+| Plane | Inferred, Plane or Face, Offset from Plane, At Angle to Plane, Bisector, Along Path, Two Edges, Three Points, Tangent to Face, Perpendicular to Plane. A plane that is made (not picked) becomes a datum plane feature the dialog runs first. |
+| Vector | Inferred, Edge or Line, Face or Plane Normal, Two Points, Coordinate Axis; always with **Reverse**. |
+| Point | Inferred, Existing Point, Midpoint of Edge, Where Clicked, Coordinates, Workpiece Origin. |
+
+A specifier's picks are inputs of its dialog (so the viewport sends clicks as it always does) and
+what it makes is plain data the commands already take. **Create Sketch** is built on three of them:
+the **Plane**, the **Reference Direction** (the sketch's x axis; Reverse flips it) and the **Sketch
+Origin** (the workpiece origin projected onto the plane, or any point). It waits for OK; the
+sketch stays attached to its plane, with `sketch.create`'s `reframe` (`origin`, `x_dir`) holding the
+direction and origin. Other dialogs take a specifier by `specifier::add`, read it with
+`specifier::plane`/`vector`/`point` and draw it with `specifier::show`; Create Sketch is the first,
+and the pickers the other dialogs have today (Mirror and Draft planes, pattern directions and axes,
+Revolve's axis) move onto them one at a time.
+
 **Datums** are one dialog each (Plane, Axis, Point) with a Type row: *Inferred* (the method follows
 what you pick) and every construction method the engine has. Click a plane in the Origin rows to pick
 it into the dialog. A pattern's direction takes an axis, an edge or a planar face.

@@ -308,9 +308,19 @@ fn mint_identity() -> String {
 }
 
 fn set_identity(s: &mut Session, id: String) {
+    // As in a rename, a prepared world matching the document stays matched: an identity changes
+    // nothing a save's warm geometry and display caches depend on.
+    let model = s.model.state();
+    let keep_world = s.world_cache.lock().ok().is_some_and(|cache| cache.as_ref().is_some_and(|cache| cache.matches(s, &model)));
     s.doc_mut().id = id.clone();
     for snap in s.undo.iter_mut().chain(s.redo.iter_mut()) {
         std::sync::Arc::make_mut(&mut snap.doc).id = id.clone();
+    }
+    if keep_world
+        && let Ok(mut cache) = s.world_cache.lock()
+        && let Some(cache) = cache.as_mut()
+    {
+        cache.doc = std::sync::Arc::clone(&s.doc);
     }
 }
 

@@ -240,3 +240,50 @@ fn editing_a_datum_through_its_dialog_redefines_it_in_place() {
     };
     assert!(matches!(b, GeoRef::Vertex { at } if (at.y - 10.0).abs() < 1e-6), "{b:?}");
 }
+
+#[test]
+fn the_preview_group_switches_the_live_result_off_and_on() {
+    let mut h = Harness::new();
+    h.app.preferences.modelling_approach = ModellingApproach::Advanced;
+    sketch(&mut h);
+    h.step(&json!({"call":"ui.start","params":{"command":"solid.extrude"}})).unwrap();
+    h.frames(30);
+    assert!(h.app.preview.active, "the result is previewed by default");
+    h.step(&json!({"widget":"Show result"})).unwrap();
+    h.frames(6);
+    assert!(h.app.preview.hidden && !h.app.preview.active, "Show result off clears the preview");
+    let before = features(&h);
+    h.step(&json!({"widget":"OK"})).unwrap();
+    h.frames(6);
+    assert_eq!(features(&h), before + 1, "OK still makes the feature");
+    h.app.preview.hidden = false;
+}
+
+#[test]
+fn classic_dialogs_have_no_preview_group() {
+    let mut h = Harness::new();
+    sketch(&mut h);
+    h.step(&json!({"call":"ui.start","params":{"command":"solid.extrude"}})).unwrap();
+    h.frames(6);
+    assert!(h.step(&json!({"widget":"Show result"})).is_err());
+}
+
+fn to_object_accept(approach: ModellingApproach) -> crate::selection::Accept {
+    use crate::selection::{FACES, SelInput, VERTICES};
+    let mut h = Harness::new();
+    h.app.preferences.modelling_approach = approach;
+    sketch(&mut h);
+    h.step(&json!({"call":"ui.start","params":{"command":"solid.extrude"}})).unwrap();
+    h.frames(4);
+    let d = h.app.dialog.as_mut().unwrap();
+    d.inputs.push(SelInput::new("To Object", FACES | VERTICES, false));
+    h.frames(4);
+    h.app.dialog.as_ref().unwrap().inputs.iter().find(|i| i.label == "To Object").unwrap().accept
+}
+
+#[test]
+fn specify_point_takes_an_edge_in_advanced_only() {
+    use crate::selection::EDGES;
+    assert_ne!(to_object_accept(ModellingApproach::Advanced) & EDGES, 0);
+    assert_eq!(to_object_accept(ModellingApproach::Classic) & EDGES, 0);
+}

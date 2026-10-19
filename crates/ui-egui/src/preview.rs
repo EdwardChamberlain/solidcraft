@@ -68,6 +68,9 @@ type Job = Result<Built, String>;
 
 #[derive(Default)]
 pub struct PreviewState {
+    /// The Preview group's "Show result" is off (Advanced dialogs): nothing is previewed, and OK
+    /// still makes the feature.
+    pub hidden: bool,
     /// Key of the commands whose result (or error) is shown.
     shown_key: Option<u64>,
     running: Option<(u64, Receiver<Job>)>,
@@ -273,6 +276,10 @@ fn stream_key(cmds: &[(String, Value)], revision: u64, colors: Colors) -> Option
 /// Keep the preview in step with the open dialog: start a computation when its inputs changed,
 /// take finished results. Called once per frame.
 pub fn update(app: &mut SolveApp, ctx: &egui::Context) {
+    if app.preview.hidden && app.dialog.as_ref().is_some_and(|d| d.previews()) {
+        app.preview.clear();
+        return;
+    }
     let cmds = match app.dialog.as_ref().filter(|d| d.previews()).map(|d| crate::dialogs::preview_commands(app, d)) {
         Some(Ok(c)) if !c.is_empty() => c,
         _ if crate::sketch_attachment_ui::commands(app).is_some() => crate::sketch_attachment_ui::commands(app).unwrap_or_default(),

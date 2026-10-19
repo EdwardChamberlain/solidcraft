@@ -2318,6 +2318,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     };
     // Advanced: Apply runs the command and starts the next one; Reset starts this one afresh.
     let stepwise = advanced && has_ok && d.editing.is_none() && d.origin.is_some();
+    crate::dialogs_specify::widen_points(app, &mut d.inputs, &[TO_OBJECT, FROM_OBJECT]);
     let width = if wide { crate::frame::Width::Wide } else { crate::frame::Width::Normal };
     let wkey = egui::Id::new(("sc_dialog_w", wide));
     let response = crate::frame::docked_on(
@@ -3154,6 +3155,15 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 error_rows(app, ctx, &mut d, ui, false);
             });
         });
+        // Advanced: the Preview group, one switch for the live result.
+        if advanced && d.previews() && !matches!(d.kind, Kind::SketchModify(_)) {
+            ui.add_space(4.0);
+            ui.separator();
+            let mut shown = !app.preview.hidden;
+            let r = ui.checkbox(&mut shown, tr("Show result"));
+            crate::scenario::publish_handle("dialog:preview", r.rect.center());
+            app.preview.hidden = !shown;
+        }
         ui.add_space(6.0);
         // Footer: an info glyph at the left, OK and Cancel at the right.
         ui.horizontal(|ui| {

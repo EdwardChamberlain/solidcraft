@@ -480,9 +480,11 @@ impl Dialog {
                 // The plane, the direction of its x axis and the origin, each named explicitly.
                 let mut d = Dialog::new(Kind::Sketch, Vec::new());
                 use crate::specifier::{Class, Specifier, add};
+                // Only the plane needs a click: the direction defaults to the x axis and the origin
+                // to the workpiece origin.
                 add(app, &mut d, Specifier::new(Class::Plane, 0));
-                add(app, &mut d, Specifier::new(Class::Vector, 0));
-                add(app, &mut d, Specifier::new(Class::Point, 0));
+                add(app, &mut d, Specifier::with_id(Class::Vector, "axis"));
+                add(app, &mut d, Specifier::with_id(Class::Point, "origin"));
                 d
             }
             "sketch.create" => Dialog::new(Kind::Sketch, vec![SelInput::new("Plane", PLANES | PLANAR_FACES, false)]),
@@ -590,11 +592,14 @@ impl Dialog {
                 Kind::Measure { result: None, of: Vec::new(), show: None },
                 vec![SelInput::new("Items", FACES | EDGES | selection::VERTICES | selection::CURVES | PROFILES, true)],
             ),
-            "solid.pattern.rectangular" => {
+            "solid.pattern.rectangular" | "solid.pattern.feature" | "solid.pattern.geometry" => {
+                // Pattern Feature repeats features, Pattern Geometry bodies; the layout is the
+                // dialog's own Type (Linear to start with).
+                let objects = if id == "solid.pattern.feature" { selection::FEATURES } else { BODIES };
                 Dialog::new(Kind::PatternRect { count: "3".into(), spacing: "20 mm".into(), count2: "1".into(), spacing2: "20 mm".into() }, {
                     let vector = crate::dialogs_specify::accept(app);
                     vec![
-                        SelInput::new("Objects", BODIES, true),
+                        SelInput::new(objects_label(objects), objects, true),
                         SelInput::new("Direction", vector, false),
                         SelInput::new("Direction 2", vector, false),
                     ]
@@ -1702,9 +1707,12 @@ fn placement_row(d: &mut Dialog, ui: &mut egui::Ui, vector: Accept) {
         _ => None,
     };
     if let Some(cur) = current {
-        row_label(ui, "Type");
+        // Pattern Feature and Pattern Geometry say what is repeated in the command; their Layout
+        // is how.
+        let layout = matches!(d.origin.as_deref(), Some("solid.pattern.feature" | "solid.pattern.geometry"));
+        row_label(ui, if layout { "Layout" } else { "Type" });
         let mut ty = cur;
-        combo(ui, "pat_type", &["Rectangular", "Circular", "Path"], &mut ty);
+        combo(ui, "pat_type", if layout { &["Linear", "Circular", "Along Path"] } else { &["Rectangular", "Circular", "Path"] }, &mut ty);
         ui.end_row();
         if ty != cur {
             // Same objects, the new pattern's other inputs.
@@ -1738,7 +1746,9 @@ fn placement_row(d: &mut Dialog, ui: &mut egui::Ui, vector: Accept) {
             d.extra.clear();
             d.advance();
         }
-        object_type_row(d, ui);
+        if !layout {
+            object_type_row(d, ui);
+        }
         return;
     }
     let Kind::Hole { opts, .. } = &mut d.kind else { return };
@@ -2320,7 +2330,12 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let pattern_columns = matches!(d.kind, Kind::SketchModify(crate::sketch_modify_ui::Mod::PatternRect { .. }))
         || (matches!(d.kind, Kind::PatternRect { .. }) && d.inputs.first().is_some_and(|i| i.accept == selection::FEATURES));
     // Advanced: every datum dialog is "Datum Plane/Axis/Point", whatever its Type.
-    let raw_title = if advanced { crate::dialogs_datum::class_title(&d.kind).unwrap_or_else(|| title(&d.kind)) } else { title(&d.kind) };
+    let raw_title = match d.origin.as_deref() {
+        Some("solid.pattern.feature") => "PATTERN FEATURE",
+        Some("solid.pattern.geometry") => "PATTERN GEOMETRY",
+        _ if advanced => crate::dialogs_datum::class_title(&d.kind).unwrap_or_else(|| title(&d.kind)),
+        _ => title(&d.kind),
+    };
     let heading = if d.editing.is_some() { crate::i18n::format("dialog.edit_title", &[("title", tr(raw_title))]) } else { tr(raw_title).to_string() };
     let frame = crate::frame::dock_frame(ctx, side);
     // The area includes the border as well as the inner margins; reserve all of it so a
@@ -2432,9 +2447,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 if advanced {
                     crate::dialogs_datum::type_row(app, &mut d, ui);
                 }
-                if matches!(&d.kind, Kind::SketchModify(k) if k.previews())
-                    || matches!(d.kind, Kind::Mirror | Kind::PatternRect { .. } | Kind::PatternCirc { .. } | Kind::PathPattern { .. })
-                    || (advanced && d.inputs.len() > 1 && d.editing.is_none())
+                // The step and its guidance are Classic's; the Advanced dialogs show their inputs
+                // and which one is active, and need no commentary.
+                if !advanced
+                    && (matches!(&d.kind, Kind::SketchModify(k) if k.previews())
+                        || matches!(d.kind, Kind::Mirror | Kind::PatternRect { .. } | Kind::PatternCirc { .. } | Kind::PathPattern { .. }))
                 {
                     row_label(ui, "dialog.step");
                     let label = d.active_input().map(|input| tr(input.label)).unwrap_or_else(|| tr("Objects"));
@@ -3312,6 +3329,15 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     }
     // A plane picked for a new sketch starts it right away.
     let mut then_start = None;
+    if crate::specifier::starts_on_pick(app, &d) && d.error.is_none() && app.applying.is_none() {
+        match run_dialog(app, &d) {
+            Ok(()) => {
+                cancel = true;
+                then_start = d.then_start;
+            }
+            Err(error) => d.refuse(app, error),
+        }
+    }
     if matches!(d.kind, Kind::Sketch)
         && !crate::specifier::is_sketch(&d)
         && d.error.is_none()
@@ -3725,6 +3751,10 @@ pub(crate) fn sketch_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String,
     let mut reframe = serde_json::Map::new();
     if let Some(v) = direction {
         reframe.insert("x_dir".into(), pt(v));
+        // A coordinate axis that happens to be square to the plane leaves the plane's own x.
+        if d.specs.get(1).is_some_and(|s| s.id() == "axis") {
+            reframe.insert("soft".into(), json!(true));
+        }
     }
     if let Some(p) = origin {
         reframe.insert("origin".into(), pt(p));
@@ -3853,7 +3883,11 @@ pub(crate) fn run_dialog(app: &mut SolveApp, d: &Dialog) -> Result<(), String> {
     }
     if crate::specifier::is_sketch(d) {
         let commands = sketch_commands(app, d)?;
-        return start_sketch_with(app, commands, None);
+        let focus = crate::specifier::plane(app, d, 0).ok().and_then(|p| match p.sel {
+            Some(Sel::Face { point, .. }) => Some(point),
+            _ => None,
+        });
+        return start_sketch_with(app, commands, focus);
     }
     let commands = apply_commands(app, d)?;
     if let Some((_, marker)) = d.editing {

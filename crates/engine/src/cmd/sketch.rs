@@ -29,7 +29,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("sketch.create", "Create Sketch", create_sketch)
         .at("SOLID", "CREATE")
         .icon("sketch")
-        .params("plane: XY|XZ|YZ | construction plane name or id | {origin, x_dir, y_dir} | {face: [world x,y,z], body?: exact world body, index?: face index, path?: complete occurrence ids, fixed?: bool}; new face attachments require a unique certified source (a flat face of a sheet metal body attaches to its panel instead, in the flat pattern's coordinates), fixed:true explicitly freezes the selected plane; offset?: expr, flip?: bool | \"x\" | \"y\" (not on a face: sketch the plane from its other side, so the normal and the default extrude direction are reversed; a half turn about the plane's own x or y axis, true picks the one keeping the sketch's y axis upward; offset still moves along the unflipped normal), project_edges?: bool, reframe?: {origin?: [x,y,z], x_dir?: [x,y,z]} (the sketch's origin and x axis, whatever the plane is: the origin is moved onto the plane, x_dir is taken along it; the sketch stays attached to the plane), name?"),
+        .params("plane: XY|XZ|YZ | construction plane name or id | {origin, x_dir, y_dir} | {face: [world x,y,z], body?: exact world body, index?: face index, path?: complete occurrence ids, fixed?: bool}; new face attachments require a unique certified source (a flat face of a sheet metal body attaches to its panel instead, in the flat pattern's coordinates), fixed:true explicitly freezes the selected plane; offset?: expr, flip?: bool | \"x\" | \"y\" (not on a face: sketch the plane from its other side, so the normal and the default extrude direction are reversed; a half turn about the plane's own x or y axis, true picks the one keeping the sketch's y axis upward; offset still moves along the unflipped normal), project_edges?: bool, reframe?: {origin?: [x,y,z], x_dir?: [x,y,z], soft?: bool} (the sketch's origin and x axis, whatever the plane is: the origin is moved onto the plane, x_dir is taken along it; the sketch stays attached to the plane; soft: an x_dir square to the plane is ignored, the plane keeping its own x axis, instead of an error), name?"),
     CommandSpec::new("sketch.edit", "Edit Sketch", edit_sketch).noundo().icon("sketch").params("sketch: id or name"),
     CommandSpec::new("sketch.finish", "Finish Sketch", finish_sketch).at("SKETCH", "FINISH SKETCH").icon("finish").enabled(in_sketch).noundo(),
     CommandSpec::new("sketch.line", "Line", draw_line)
@@ -655,7 +655,7 @@ fn create_sketch(s: &mut Session, p: &Value) -> Result<Value> {
         if origin.is_none() && x_dir.is_none() {
             return Err(bad(cmd, "`reframe` needs `origin`, `x_dir` or both"));
         }
-        plane = PlaneRef::Reframed { base: Box::new(plane), origin, x_dir };
+        plane = PlaneRef::Reframed { base: Box::new(plane), origin, x_dir, soft: bool_(reframe, "soft").unwrap_or(false) };
     }
     create_sketch_with_plane(s, p, plane, None)
 }

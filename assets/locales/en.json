@@ -1415,6 +1415,8 @@
   "ui.parts_updated": "{count} linked part(s) brought up to date",
   "ui.paste": "Paste",
   "ui.path": "Path",
+  "ui.pattern_feature": "Pattern Feature",
+  "ui.pattern_geometry": "Pattern Geometry",
   "ui.pattern_on_path": "Pattern on Path",
   "ui.perpendicular": "Perpendicular",
   "ui.perspective_view": "Perspective view",

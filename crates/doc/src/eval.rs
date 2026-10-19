@@ -4613,8 +4613,8 @@ pub(crate) fn sheet_face_plane_in_frame(doc: &Document, st: &ModelState, comp: u
         PlaneRef::Flipped { base, about_y } => {
             PlaneRef::Flipped { base: Box::new(sheet_face_plane_in_frame(doc, st, comp, base)?), about_y: *about_y }
         }
-        PlaneRef::Reframed { base, origin, x_dir } => {
-            PlaneRef::Reframed { base: Box::new(sheet_face_plane_in_frame(doc, st, comp, base)?), origin: *origin, x_dir: *x_dir }
+        PlaneRef::Reframed { base, origin, x_dir, soft } => {
+            PlaneRef::Reframed { base: Box::new(sheet_face_plane_in_frame(doc, st, comp, base)?), origin: *origin, x_dir: *x_dir, soft: *soft }
         }
         other => other.clone(),
     })

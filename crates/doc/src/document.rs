@@ -75,6 +75,10 @@ pub enum PlaneRef {
         origin: Option<Vec3>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         x_dir: Option<Vec3>,
+        /// A direction square to the plane (a default that does not suit this plane) is ignored:
+        /// the plane keeps its own x axis, instead of the sketch failing.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        soft: bool,
     },
     /// Halfway between two planes (or planar faces); bisecting them when they meet at an angle.
     Midplane { a: Box<GeoRef>, b: Box<GeoRef> },
@@ -3204,10 +3208,12 @@ impl Document {
                 Plane::new(o, rot(b.x), rot(b.y)).ok_or_else(|| DocError::Invalid("degenerate plane".into()))
             }
             PlaneRef::Flipped { base, about_y } => Ok(self.resolve_plane_in(vals, base, depth + 1, st)?.flipped(*about_y)),
-            PlaneRef::Reframed { base, origin, x_dir } => self
-                .resolve_plane_in(vals, base, depth + 1, st)?
-                .reframed(*origin, *x_dir)
-                .ok_or_else(|| DocError::Invalid("the sketch direction must lie along the plane, not square to it".into())),
+            PlaneRef::Reframed { base, origin, x_dir, soft } => {
+                let b = self.resolve_plane_in(vals, base, depth + 1, st)?;
+                b.reframed(*origin, *x_dir)
+                    .or_else(|| if *soft { b.reframed(*origin, None) } else { None })
+                    .ok_or_else(|| DocError::Invalid("the sketch direction must lie along the plane, not square to it".into()))
+            }
             PlaneRef::Construction { name } => {
                 // Evaluated already: as it came out.
                 if let Some(c) = st.and_then(|st| st.construct.iter().find(|c| &c.name == name))

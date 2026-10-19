@@ -210,10 +210,54 @@ fn linked_bodies(file: &Path, own: Option<&str>) -> Result<(String, String, Opti
     let step = solidcraft_io::export(&part.doc.painted(&world), &solids, solidcraft_io::Format::Step, &name)
         .map_err(|e| EngineError::Other(format!("{shown}: {e}")))?;
     let mut feature = solidcraft_io::step_import_feature(&step, &shown).map_err(|e| EngineError::Other(format!("{shown}: {e}")))?;
+    // The faces keep the names they have in the part, so what refers to one follows the part.
+    let carried = carried_face_names(&world, &solids, &feature.import);
+    if carried.iter().any(|names| names.iter().any(|n| !n.is_empty()))
+        && let FeatureKind::Import { part_face_names, .. } = &mut feature.kind
+    {
+        *part_face_names = carried;
+    }
     if world.bodies.len() > solids.len() {
         feature.warnings.push(format!("{} mesh bodies of {shown} are not linked", world.bodies.len() - solids.len()));
     }
     Ok((name, id, Some(feature)))
+}
+
+/// What the faces of the part's solid bodies are called in the part, laid over the faces of the
+/// file read back from their export: for each body of the file (by index), each face's name in the
+/// part, or empty where the face could not be matched. The file's faces come back in an order of
+/// their own, so each is matched to the part's face it lies on (the same area, about the same
+/// centre) rather than taken by position; a part face two file faces match is left to neither.
+fn carried_face_names(world: &solidcraft_doc::ModelState, solids: &[String], imp: &solidcraft_kernel::StepImport) -> Vec<Vec<String>> {
+    imp.bodies
+        .iter()
+        .enumerate()
+        .map(|(k, file_body)| {
+            let named = |n: &String| world.body(n).filter(|b| !b.body.is_mesh());
+            let by_name = solids.iter().find(|n| **n == file_body.name).and_then(named);
+            let Some(source) = by_name.or_else(|| solids.get(k).and_then(named)) else { return Vec::new() };
+            let names = solidcraft_doc::naming::face_names(source);
+            let tol = (source.body.size() * 1e-3).max(1e-3);
+            let (Ok(part), Ok(file)) = (source.body.faces(tol), file_body.body.faces(tol)) else { return Vec::new() };
+            let reach = (source.body.size() * 0.02).max(1e-3);
+            let mut claimed: Vec<Option<usize>> = Vec::with_capacity(file.len());
+            for f in &file {
+                let near = part
+                    .iter()
+                    .filter(|p| (p.area - f.area).abs() <= 0.02 * p.area.max(f.area).max(1e-9) && p.centroid.dist(f.centroid) <= reach)
+                    .min_by(|a, b| a.centroid.dist(f.centroid).total_cmp(&b.centroid.dist(f.centroid)));
+                claimed.push(near.map(|p| p.index));
+            }
+            let mut count = std::collections::HashMap::new();
+            for i in claimed.iter().flatten() {
+                *count.entry(*i).or_insert(0usize) += 1;
+            }
+            file.iter()
+                .zip(&claimed)
+                .map(|(_, c)| c.filter(|i| count.get(i) == Some(&1)).and_then(|i| names.get(i)).cloned().unwrap_or_default())
+                .collect()
+        })
+        .collect()
 }
 
 /// The bodies of a linked part, as an Import feature in component `comp`.
@@ -335,7 +379,7 @@ fn update_links(s: &mut Session, p: &Value) -> Result<Value> {
             None
         } else {
             match s.doc.feature(link.feature).filter(|f| f.component == comp).map(|f| &f.kind) {
-                Some(FeatureKind::Import { step, .. }) => Some(step.clone()),
+                Some(FeatureKind::Import { step, part_face_names, .. }) => Some((step.clone(), part_face_names.clone())),
                 _ => {
                     return Err(bad(
                         cmd,
@@ -377,7 +421,7 @@ fn update_links(s: &mut Session, p: &Value) -> Result<Value> {
                 updated.push(cname);
             }
             (Some(old), Some(sf)) => {
-                if matches!(&sf.kind, FeatureKind::Import { step, .. } if *step == old) {
+                if matches!(&sf.kind, FeatureKind::Import { step, part_face_names, .. } if (step, part_face_names) == (&old.0, &old.1)) {
                     unchanged.push(cname);
                     continue;
                 }
@@ -758,6 +802,143 @@ mod tests {
         let mut again = Session::default();
         run(&mut again, "doc.open", json!({"path": case_file}));
         assert_eq!(again.doc.links.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The name and height of the face of `body` (of `s`'s model) that looks up and stands highest.
+    fn top_face(s: &Session, body: &str) -> (String, f64) {
+        let st = s.model.state();
+        let b = st.body(body).unwrap_or_else(|| panic!("no body {body}"));
+        let faces = b.body.faces((b.body.size() * 1e-3).max(1e-3)).unwrap();
+        let top = faces
+            .iter()
+            .filter(|f| f.plane_normal.is_some_and(|n| n.z > 0.9))
+            .max_by(|a, c| a.centroid.z.total_cmp(&c.centroid.z))
+            .expect("a face looking up");
+        (solidcraft_doc::naming::face_names(b)[top.index].clone(), top.centroid.z)
+    }
+
+    fn save_prism(path: &Path, distance: &str) {
+        let mut part = Session::default();
+        run(&mut part, "sketch.create", json!({"plane": "XY", "name": "Base"}));
+        run(&mut part, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [40, 25]}));
+        run(&mut part, "sketch.finish", json!({}));
+        run(&mut part, "solid.extrude", json!({"sketch": "Base", "distance": distance, "operation": "new", "name": "Boss", "body_name": "Boss"}));
+        run(&mut part, "file.save", json!({"path": path}));
+    }
+
+    /// The prism with a corner chamfered in its sketch (one more side, so its top face comes later
+    /// in the file) and taller.
+    fn change_prism(part: &mut Session) {
+        run(part, "sketch.edit", json!({"sketch": "Base"}));
+        run(part, "sketch.chamfer.equal_distance", json!({"a": "l2", "b": "l3", "distance": 6}));
+        run(part, "sketch.finish", json!({}));
+        run(part, "timeline.edit", json!({"feature": "Boss", "set": {"extent": {"distance": "25 mm"}}}));
+    }
+
+    #[test]
+    fn a_linked_parts_faces_keep_the_names_they_have_in_the_part() {
+        let dir = temp_dir("carried-names");
+        let part_file = dir.join("boss.solidcraft");
+        save_prism(&part_file, "10 mm");
+        let mut part = Session::default();
+        run(&mut part, "doc.open", json!({"path": part_file}));
+        let (in_part, _) = top_face(&part, "Boss");
+        let mut case = Session::default();
+        let made = run(&mut case, "component.insert_design", json!({"path": part_file}));
+        let import = made["feature"].as_u64().unwrap();
+        let body = made["bodies"][0].as_str().unwrap().to_string();
+        let (in_case, _) = top_face(&case, &body);
+        assert_eq!(in_case, format!("F{import}:{in_part}"), "the part's own name, under the import's feature");
+        // Its place in the file stays an alias, so older references still find it.
+        let st = case.model.state();
+        let b = st.body(&body).unwrap();
+        let index = solidcraft_doc::naming::face_names(b).iter().position(|n| *n == in_case).unwrap();
+        assert!(solidcraft_doc::naming::face_has_name(b, index, &format!("F{import}:face:{index}")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn what_names_a_face_of_a_linked_part_follows_it_when_the_part_changes_shape() {
+        let dir = temp_dir("follows");
+        let part_file = dir.join("boss.solidcraft");
+        save_prism(&part_file, "10 mm");
+        let mut case = Session::default();
+        let made = run(&mut case, "component.insert_design", json!({"path": part_file}));
+        let body = made["bodies"][0].as_str().unwrap().to_string();
+        let (name, height) = top_face(&case, &body);
+        assert!((height - 10.0).abs() < 1e-6);
+        // The part's corner is chamfered, which puts a new side among the others in the file (the top
+        // face moves from the sixth place to the seventh), and the part grows taller: its top face is
+        // the same face, though neither in the same place nor in the same position.
+        let mut part = Session::default();
+        run(&mut part, "doc.open", json!({"path": part_file}));
+        change_prism(&mut part);
+        run(&mut part, "file.save", json!({}));
+        run(&mut case, "component.update_links", json!({}));
+        let st = case.model.state();
+        let hit = solidcraft_doc::naming::locate_one(&st, Some(&body), &name).expect("the name still finds a face");
+        let b = st.body(&body).unwrap();
+        let faces = b.body.faces((b.body.size() * 1e-3).max(1e-3)).unwrap();
+        let found = faces.iter().find(|f| f.index == hit.face).unwrap();
+        assert!(found.plane_normal.is_some_and(|n| n.z > 0.9) && (found.centroid.z - 25.0).abs() < 1e-6, "{:?}", found);
+        // And the name is still the one it is under in the part itself.
+        assert_eq!(top_face(&case, &body).0, name);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_joint_origin_on_a_linked_parts_face_follows_the_face_when_the_part_changes_shape() {
+        let dir = temp_dir("joint-follows");
+        let part_file = dir.join("boss.solidcraft");
+        save_prism(&part_file, "10 mm");
+        let mut case = Session::default();
+        run(&mut case, "component.insert_design", json!({"path": part_file}));
+        // A joint origin at the centre of the top face.
+        run(&mut case, "joint.origin", json!({"name": "Top", "face": [20, 12.5, 10]}));
+        let origin = |s: &Session| {
+            let o = s.doc.assembly.origins.iter().find(|o| o.name == "Top").expect("the joint origin").origin.clone();
+            let frame = solidcraft_doc::joints::resolve_origin(&s.doc, &s.model.state(), &o).expect("the origin still resolves");
+            (frame[3][2], frame[2][2])
+        };
+        let (z, up) = origin(&case);
+        assert!((z - 10.0).abs() < 1e-6 && up > 0.99, "{z} {up}");
+        // The part's corner is chamfered (a new side among the others in the file) and it grows.
+        let mut part = Session::default();
+        run(&mut part, "doc.open", json!({"path": part_file}));
+        change_prism(&mut part);
+        run(&mut part, "file.save", json!({}));
+        run(&mut case, "component.update_links", json!({}));
+        let (z, up) = origin(&case);
+        assert!((z - 25.0).abs() < 1e-6 && up > 0.99, "the origin followed the top face: z {z}, normal {up}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_name_survives_two_levels_of_linking_and_follows_the_leaf() {
+        let dir = temp_dir("names-nested");
+        let (leaf, mid) = (dir.join("boss.solidcraft"), dir.join("mid.solidcraft"));
+        save_prism(&leaf, "10 mm");
+        let mut m = Session::default();
+        run(&mut m, "component.insert_design", json!({"path": leaf}));
+        run(&mut m, "file.save", json!({"path": mid}));
+        let mut t = Session::default();
+        let made = run(&mut t, "component.insert_design", json!({"path": mid}));
+        let body = made["bodies"][0].as_str().unwrap().to_string();
+        let (name, height) = top_face(&t, &body);
+        assert!((height - 10.0).abs() < 1e-6);
+        // The leaf changes; the middle part is not opened or saved.
+        let mut part = Session::default();
+        run(&mut part, "doc.open", json!({"path": leaf}));
+        change_prism(&mut part);
+        run(&mut part, "file.save", json!({}));
+        run(&mut t, "component.update_links", json!({}));
+        let st = t.model.state();
+        let hit = solidcraft_doc::naming::locate_one(&st, Some(&body), &name).expect("the name still finds a face two levels up");
+        let b = st.body(&body).unwrap();
+        let faces = b.body.faces((b.body.size() * 1e-3).max(1e-3)).unwrap();
+        let found = faces.iter().find(|f| f.index == hit.face).unwrap();
+        assert!(found.plane_normal.is_some_and(|n| n.z > 0.9) && (found.centroid.z - 25.0).abs() < 1e-6, "{found:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

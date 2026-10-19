@@ -66,8 +66,6 @@ is built and what is not yet.
 
 - Referring to the assembly's geometry from the work part (picking a face of another component, or
   linking to it): the context is drawn but is not pickable.
-- Persistent names across the file boundary: a joint or feature that refers to a face of a linked
-  part keeps its position when the part changes shape.
 - A shared evaluation between a part open in a tab and the same part linked in an assembly.
 - Mates between faces of different parts (assemblies use joints).
 - A specify-point widget, a Preview group in dialogs, and groups for every dialog (Extrude and

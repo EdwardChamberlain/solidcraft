@@ -188,6 +188,7 @@ mod tests {
                     step: step.into(),
                     components: Vec::new(),
                     skip: Vec::new(),
+                    part_face_names: Vec::new(),
                 },
                 None,
             )

@@ -287,3 +287,22 @@ fn specify_point_takes_an_edge_in_advanced_only() {
     assert_ne!(to_object_accept(ModellingApproach::Advanced) & EDGES, 0);
     assert_eq!(to_object_accept(ModellingApproach::Classic) & EDGES, 0);
 }
+
+fn groups_of(approach: ModellingApproach, command: &str, names: &[&str]) -> Vec<bool> {
+    let mut h = Harness::new();
+    h.app.preferences.modelling_approach = approach;
+    extruded(&mut h);
+    h.app.start(command);
+    h.frames(6);
+    names.iter().map(|n| crate::scenario::handle_at(&format!("dialog:group:{n}")).is_some()).collect()
+}
+
+#[test]
+fn hole_and_blend_dialogs_have_groups_in_advanced_only() {
+    let hole = ["hole_form", "hole_limits"];
+    assert_eq!(groups_of(ModellingApproach::Advanced, "solid.hole", &hole), [true, true]);
+    assert_eq!(groups_of(ModellingApproach::Classic, "solid.hole", &hole), [false, false]);
+    let blend = ["blend_shape", "blend_settings"];
+    assert_eq!(groups_of(ModellingApproach::Advanced, "solid.fillet", &blend), [true, true]);
+    assert_eq!(groups_of(ModellingApproach::Classic, "solid.fillet", &blend), [false, false]);
+}

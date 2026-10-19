@@ -10,7 +10,9 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         timeline::timeline(app, ui);
     }
     palette::palette_bar(app, ui);
-    if app.ui.show_browser {
+    // A floating browser keeps the workspace the whole width: it is drawn over the view below.
+    let browser_float = app.ui.show_browser && app.preferences.browser_float;
+    if app.ui.show_browser && !browser_float {
         if left_timeline {
             browser::browser_below_timeline(app, ui);
         } else {
@@ -24,6 +26,11 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     agent_chat::show(app, ui);
     preview::update(app, ui.ctx());
+    if browser_float {
+        // The room the central view is about to take, before it takes it.
+        let viewport = ui.available_rect_before_wrap();
+        browser::floating(app, ui, viewport);
+    }
     egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
         if render_workspace::active(app) {
             render_workspace::show(app, ui);

@@ -87,6 +87,8 @@ mod surface_errors_tests;
 #[cfg(test)]
 mod timeline_marks_tests;
 #[cfg(test)]
+mod work_part_tests;
+#[cfg(test)]
 mod status_tests {
     #[test]
     fn the_status_bar_names_commands_by_label() {
@@ -196,6 +198,7 @@ pub mod tools;
 pub mod update;
 pub mod viewport;
 mod viewport_layout;
+pub mod work_part;
 pub mod workspace;
 
 use std::sync::mpsc::Receiver;
@@ -366,6 +369,10 @@ pub struct SolveApp {
     pub autosave: Option<solidcraft_engine::recovery::Autosaver>,
     /// Designs left by crashed apps, offered for recovery.
     pub recoverable: Vec<solidcraft_engine::recovery::Entry>,
+    /// The assembly the design on show is the work part of (per design: tabs carry their own).
+    pub work: Option<work_part::WorkContext>,
+    /// The context bodies last made for the scene.
+    pub(crate) work_cache: std::sync::Mutex<Option<work_part::Cached>>,
     /// The bodies of a just-opened Y-up file, offered to be stood up (`stand_up`).
     pub stand_up: Option<Vec<String>>,
     /// The placement of the component that file came in as: the offer turns it.
@@ -476,6 +483,8 @@ impl SolveApp {
             quit_requested: false,
             autosave: None,
             recoverable: Vec::new(),
+            work: None,
+            work_cache: std::sync::Mutex::new(None),
             stand_up: None,
             stand_up_occurrence: None,
             msaa_supported: Vec::new(),

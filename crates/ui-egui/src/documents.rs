@@ -27,6 +27,8 @@ pub struct DocSlot {
 /// The per-design part of the UI state (what is hidden, shown or locked).
 #[derive(Clone, Debug, Default)]
 struct DocView {
+    /// The assembly this design is the work part of, if any.
+    work: Option<crate::work_part::WorkContext>,
     render: crate::render_workspace::ViewState,
     sketch_choices: crate::sketch_families::Choices,
     hidden_profiles: Vec<u64>,
@@ -65,6 +67,7 @@ impl Documents {
 fn take_view(app: &mut SolveApp) -> DocView {
     let u = &mut app.ui;
     DocView {
+        work: app.work.take(),
         render: std::mem::take(&mut app.render_workspace.view),
         sketch_choices: std::mem::take(&mut app.sketch_choices),
         hidden_profiles: std::mem::take(&mut u.hidden_profiles),
@@ -74,6 +77,7 @@ fn take_view(app: &mut SolveApp) -> DocView {
 }
 
 fn put_view(app: &mut SolveApp, v: DocView) {
+    app.work = v.work;
     app.render_workspace.view = v.render;
     crate::render_workspace::invalidate_scene(app);
     crate::render_workspace::sync_backend(app);
@@ -137,6 +141,12 @@ pub fn switch(app: &mut SolveApp, i: usize) {
     }
     app.docs.active = i;
     live_update(app);
+}
+
+/// The tab showing the design saved at `path`, if one is open.
+pub fn tab_of(app: &SolveApp, path: &str) -> Option<usize> {
+    let (sessions, _) = open_sessions(&app.docs, &app.session);
+    sessions.iter().position(|s| s.path.as_deref().is_some_and(|p| solidcraft_engine::workspace::same_file(p, path)))
 }
 
 /// The open designs that have a file, as linked parts see them (`workspace::with_open_designs`).

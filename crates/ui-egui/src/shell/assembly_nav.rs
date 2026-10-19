@@ -133,7 +133,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
 
 fn one_row(app: &mut SolveApp, ui: &mut egui::Ui, row: &Row) {
     let t = Tokens::get();
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.add_space(8.0 + row.depth as f32 * 14.0);
         let status = match (&row.path, row.found) {
             (None, _) => "ui.component_inside",
@@ -166,9 +166,19 @@ fn one_row(app: &mut SolveApp, ui: &mut egui::Ui, row: &Row) {
             let button = ui.small_button(app.tr("ui.open_part"));
             crate::scenario::publish_rect(&format!("assembly_nav:open:{}", row.name), button.rect);
             open |= button.clicked();
+            // The same part, with the rest of the assembly around it.
+            let work = ui.small_button(app.tr("ui.make_work_part"));
+            crate::scenario::publish_rect(&format!("assembly_nav:work:{}", row.name), work.rect);
+            if work.clicked() {
+                work_part_of(app, row.component);
+            }
         }
         // The same and the rest, on a right click.
         label.context_menu(|ui| {
+            if row.file.is_some() && row.found && ui.button(app.tr("ui.make_work_part")).clicked() {
+                work_part_of(app, row.component);
+                ui.close();
+            }
             if let Some(file) = &row.file
                 && row.found
                 && ui.button(app.tr("ui.open_part_displayed")).clicked()
@@ -206,4 +216,11 @@ fn one_row(app: &mut SolveApp, ui: &mut egui::Ui, row: &Row) {
         }
     });
     ui.add_space(2.0);
+}
+
+/// Edit a component's part with the assembly around it; say why when that can't be done.
+fn work_part_of(app: &mut SolveApp, component: u64) {
+    if let Err(e) = crate::work_part::make_work_part(app, component) {
+        app.set_status(e, true);
+    }
 }

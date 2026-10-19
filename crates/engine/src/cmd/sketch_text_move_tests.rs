@@ -371,3 +371,28 @@ fn a_text_on_a_spline_turns_its_path_into_a_guide() {
     }
     assert!(!construction(&s), "undoing the text gives the curve back");
 }
+
+#[test]
+fn valign_sets_where_the_lines_sit_against_the_anchor_and_bad_values_are_refused() {
+    let top_of = |valign: Option<&str>| -> f64 {
+        let mut s = Session::default();
+        run(&mut s, "sketch.create", json!({"plane":"XY"}));
+        let mut p = json!({"text":"H\nH","at":[0,0],"height":10});
+        if let Some(v) = valign {
+            p["valign"] = json!(v);
+        }
+        run(&mut s, "sketch.text", p);
+        s.doc.sketch(1).unwrap().points.iter().map(|q| q.pos.y).fold(f64::MIN, f64::max)
+    };
+    let baseline = top_of(None);
+    assert!((top_of(Some("baseline")) - baseline).abs() < 1e-9, "baseline is the default");
+    assert!(top_of(Some("top")).abs() < 0.05, "top: the text hangs from the anchor");
+    assert!(top_of(Some("bottom")) > baseline, "bottom: the lines stand above it");
+    let (top, bottom) = (top_of(Some("top")), top_of(Some("bottom")));
+    assert!((top_of(Some("middle")) - (top + bottom) / 2.0).abs() < 0.05, "middle sits halfway between top and bottom");
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane":"XY"}));
+    for bad in [json!("sideways"), json!(3)] {
+        assert!(s.execute("sketch.text", &json!({"text":"H","at":[0,0],"valign":bad})).is_err());
+    }
+}

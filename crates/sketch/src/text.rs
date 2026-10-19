@@ -100,6 +100,28 @@ impl TextAlign {
     }
 }
 
+/// Where the block of lines sits above or below its anchor.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextVAlign {
+    /// The first line's baseline is on the anchor (the text stands on it).
+    #[default]
+    Baseline,
+    /// The top of the first line's capitals is on the anchor: the text hangs from it.
+    Top,
+    /// The block of lines is centred on it, from the top of the first line to the baseline of
+    /// the last.
+    Middle,
+    /// The last line's baseline is on the anchor: the text stands on it with its lines above.
+    Bottom,
+}
+
+impl TextVAlign {
+    fn is_baseline(&self) -> bool {
+        *self == TextVAlign::Baseline
+    }
+}
+
 /// How a text is set: the style of its font, where its lines sit, the space between its letters
 /// and lines, and the sketch curve its baseline follows (instead of the straight line from `at`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -110,6 +132,9 @@ pub struct TextStyle {
     pub italic: bool,
     #[serde(default, skip_serializing_if = "TextAlign::is_left")]
     pub align: TextAlign,
+    /// Where the lines sit above or below the anchor.
+    #[serde(default, skip_serializing_if = "TextVAlign::is_baseline")]
+    pub valign: TextVAlign,
     /// Extra space between letters (mm; negative brings them closer).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub letter_spacing: f64,
@@ -127,7 +152,16 @@ pub struct TextStyle {
 
 impl Default for TextStyle {
     fn default() -> Self {
-        TextStyle { bold: false, italic: false, align: TextAlign::Left, letter_spacing: 0.0, line_spacing: 1.0, path: None, reverse: false }
+        TextStyle {
+            bold: false,
+            italic: false,
+            align: TextAlign::Left,
+            valign: TextVAlign::Baseline,
+            letter_spacing: 0.0,
+            line_spacing: 1.0,
+            path: None,
+            reverse: false,
+        }
     }
 }
 
@@ -224,9 +258,17 @@ pub fn text_geometry_styled(
     let along = path.map(|pts| Path::new(pts, style.reverse)).transpose()?;
     let anchor = along.as_ref().map(|p| p.anchor(style.align)).unwrap_or(0.0);
     let (sin, cos) = angle.sin_cos();
+    // The lines span from the top of the first one's capitals to the last one's baseline.
+    let last = lines.len().saturating_sub(1) as f64 * line_gap;
+    let lift = match style.valign {
+        TextVAlign::Baseline => 0.0,
+        TextVAlign::Top => -height,
+        TextVAlign::Middle => -(height - last) / 2.0,
+        TextVAlign::Bottom => last,
+    };
     let mut out = Vec::new();
     for (row, (glyphs, width)) in lines.iter().enumerate() {
-        let base_y = -(row as f64) * line_gap;
+        let base_y = -(row as f64) * line_gap + lift;
         let start = match style.align {
             TextAlign::Left => 0.0,
             TextAlign::Center => -width / 2.0,

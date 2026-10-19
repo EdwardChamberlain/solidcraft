@@ -62,6 +62,13 @@ dialog waits for OK. The sketch stays attached to its plane, with `sketch.create
 and the pickers the other dialogs have today (Mirror and Draft planes, pattern directions and axes,
 Revolve's axis) move onto them one at a time.
 
+**In a sketch**, the Advanced ribbon puts **Finish Sketch** first, with **Reattach Sketch** beside it:
+the same Plane, Reference Direction and Sketch Origin as Create Sketch, applied to the sketch being
+edited (or the one selected in the tree) with its geometry and dimensions kept. It waits for OK, and
+what is left unspecified is left as it was (`sketch.reattach`, which is `sketch.redefine` with a
+`reframe`). The text tool aligns its lines horizontally (left, center, right) and **vertically**
+(baseline, top, middle, bottom) against its anchor.
+
 **Datums** are one dialog each (Plane, Axis, Point) with a Type row: *Inferred* (the method follows
 what you pick) and every construction method the engine has. Click a plane in the Origin rows to pick
 it into the dialog. A pattern's direction takes an axis, an edge or a planar face.

@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use solidcraft_engine::{
     Sel,
     doc::expr::Kind as ValueKind,
-    sketch::{LinkKind, LinkSource, TextAlign, TextStyle},
+    sketch::{LinkKind, LinkSource, TextAlign, TextStyle, TextVAlign},
 };
 
 use crate::SolveApp;
@@ -486,6 +486,19 @@ pub(crate) fn rows(ui: &mut egui::Ui, k: &mut Tx, inputs: &mut [SelInput], activ
         }
     });
     ui.end_row();
+    crate::dialogs::row_label(ui, "Vertical Alignment");
+    ui.horizontal(|ui| {
+        for (valign, id, handle) in [
+            (TextVAlign::Baseline, "sketch_text.valign_baseline", "dialog:Align baseline"),
+            (TextVAlign::Top, "sketch_text.valign_top", "dialog:Align top"),
+            (TextVAlign::Middle, "sketch_text.valign_middle", "dialog:Align middle"),
+            (TextVAlign::Bottom, "sketch_text.valign_bottom", "dialog:Align bottom"),
+        ] {
+            let response = ui.selectable_value(&mut k.style.valign, valign, crate::i18n::tr(id));
+            crate::scenario::publish_handle(handle, response.rect.center());
+        }
+    });
+    ui.end_row();
     // On a path the curve places the text: X, Y and the angle do not.
     let on_path = k.style.path.is_some();
     for (i, (label, value)) in LABELS.iter().zip(k.values.iter_mut()).enumerate() {
@@ -689,9 +702,15 @@ fn edit_params(app: &SolveApp, k: &Tx) -> Result<Value, String> {
         TextAlign::Center => "center",
         TextAlign::Right => "right",
     };
+    let valign = match k.style.valign {
+        TextVAlign::Baseline => "baseline",
+        TextVAlign::Top => "top",
+        TextVAlign::Middle => "middle",
+        TextVAlign::Bottom => "bottom",
+    };
     let mut params = json!({
         "link": k.link, "text": k.text, "at": [sent_x, sent_y], "height": sent_height,
-        "bold": k.style.bold, "italic": k.style.italic, "align": align,
+        "bold": k.style.bold, "italic": k.style.italic, "align": align, "valign": valign,
         "letter_spacing": letter_spacing, "line_spacing": line_spacing,
         "path": k.style.path.clone().unwrap_or_default(), "reverse": k.style.reverse,
     });
@@ -1439,6 +1458,32 @@ mod tests {
         assert_eq!(tx(&h.app).style, live);
         assert_eq!(tx(&h.app).values[4], "1.5 mm");
         assert_eq!(tx(&h.app).values[5], "1.25");
+    }
+
+    #[test]
+    fn vertical_alignment_moves_the_text_live_and_applies_in_one_step() {
+        let (mut h, link, _) = setup();
+        let undo = h.app.session.undo.len();
+        let sid = h.app.session.active_sketch.unwrap();
+        let top_of = |h: &Harness| -> f64 {
+            let st = h.app.session.world_state();
+            st.sketch(sid).unwrap().sketch.points.iter().map(|p| p.pos.y).fold(f64::MIN, f64::max)
+        };
+        let baseline = top_of(&h);
+        h.app.start("sketch.edit_text");
+        h.frames(3);
+        h.step(&json!({"click":{"handle":"dialog:Align top"}})).unwrap();
+        h.frames(2);
+        assert_eq!(style_of(&h, &link).valign, TextVAlign::Top);
+        assert!(top_of(&h) < baseline - 1.0, "the text hangs below its anchor now: {} vs {baseline}", top_of(&h));
+        ok(&mut h);
+        assert_eq!(h.app.session.undo.len(), undo + 1);
+        assert_eq!(style_of(&h, &link).valign, TextVAlign::Top);
+        // Reopened, the dialog shows it.
+        h.app.session.selection = vec![Sel::SketchCurve { id: h.app.session.doc.sketch(sid).unwrap().curves[0].id.clone() }];
+        h.app.start("sketch.edit_text");
+        h.frames(3);
+        assert_eq!(tx(&h.app).style.valign, TextVAlign::Top);
     }
 
     #[test]

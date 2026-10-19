@@ -258,3 +258,42 @@ fn nothing_picked_refuses_ok_with_a_reason_instead_of_a_sketch() {
     let err = crate::dialogs::sketch_commands(&h.app, d).unwrap_err();
     assert!(err.contains("select a plane"), "{err}");
 }
+
+#[test]
+fn reattach_sketch_changes_the_plane_of_the_sketch_being_edited() {
+    let mut h = advanced();
+    h.app.run("sketch.create", json!({"plane":"XY","name":"Base"})).unwrap();
+    h.app.run("sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[10,5]})).unwrap();
+    h.frames(4);
+    let curves = h.app.session.doc.sketch(h.app.session.active_sketch.unwrap()).unwrap().curves.len();
+    h.app.start("sketch.reattach");
+    h.frames(4);
+    let d = h.app.dialog.as_ref().expect("the Reattach dialog opens");
+    assert_eq!(d.specs.len(), 3, "plane, reference direction and origin, like Create Sketch");
+    assert!(d.specs[1].id() == "inferred" && d.specs[2].id() == "inferred", "nothing is changed unless asked for");
+    pick(&mut h, 0, plane("XZ"));
+    h.frames(6);
+    assert!(h.app.dialog.is_some(), "a pick alone does not reattach: OK does");
+    ok(&mut h);
+    assert!(h.app.dialog.is_none());
+    let p = sketch_plane(&h);
+    assert!(near(p.normal(), solidcraft_engine::geom::Plane::XZ.normal()), "{p:?}");
+    let id = h.app.session.active_sketch.expect("still editing the sketch");
+    assert_eq!(h.app.session.doc.sketch(id).unwrap().curves.len(), curves, "the geometry stays");
+}
+
+#[test]
+fn reattach_sketch_takes_a_datum_plane_and_nothing_without_a_sketch() {
+    let mut h = advanced();
+    h.app.start("sketch.reattach");
+    h.frames(3);
+    assert!(h.app.dialog.is_none(), "no sketch, no dialog");
+    h.app.run("construct.plane.offset", json!({"base":"XY","offset":"15 mm","name":"Datum A"})).unwrap();
+    h.app.run("sketch.create", json!({"plane":"XY","name":"Base"})).unwrap();
+    h.frames(3);
+    h.app.start("sketch.reattach");
+    h.frames(4);
+    pick(&mut h, 0, plane("Datum A"));
+    ok(&mut h);
+    assert!(near(sketch_plane(&h).origin, Vec3::new(0.0, 0.0, 15.0)), "{:?}", sketch_plane(&h));
+}

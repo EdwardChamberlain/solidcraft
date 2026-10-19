@@ -641,6 +641,13 @@ fn create_sketch(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(about_y) = flip_param(s, p, &plane, cmd)? {
         plane = PlaneRef::Flipped { base: Box::new(plane), about_y };
     }
+    plane = reframed(p, plane, cmd)?;
+    create_sketch_with_plane(s, p, plane, None)
+}
+
+/// `reframe` of `sketch.create` and `sketch.redefine`: the plane with the sketch's own origin and
+/// x axis.
+pub(super) fn reframed(p: &Value, mut plane: PlaneRef, cmd: &str) -> Result<PlaneRef> {
     if let Some(reframe) = p.get("reframe").filter(|v| !v.is_null()) {
         let point = |key: &str| -> Result<Option<Vec3>> {
             match reframe.get(key) {
@@ -657,7 +664,7 @@ fn create_sketch(s: &mut Session, p: &Value) -> Result<Value> {
         }
         plane = PlaneRef::Reframed { base: Box::new(plane), origin, x_dir, soft: bool_(reframe, "soft").unwrap_or(false) };
     }
-    create_sketch_with_plane(s, p, plane, None)
+    Ok(plane)
 }
 
 /// `flip` of `sketch.create`: `None` keeps the plane's own side, otherwise the axis to turn

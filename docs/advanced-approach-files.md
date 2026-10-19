@@ -77,13 +77,35 @@ in the part's frame (`work_part.rs`):
 - Changes made in the part reach the assembly the way any edit of a part in another tab does
   (switching to the assembly's tab, Update parts, Save all).
 
+## Face names across the file boundary
+
+The faces of a linked part keep the names they have in the part (`part_face_names` on the Import
+feature, one list per body of the file, one name per face; `carried_face_names` in
+`component_link.rs`). When a part is linked or updated, each face of its exported file is matched
+to the part's face it lies on (the same area, about the same centre, since the file's faces come
+back in an order of their own) and takes that face's name, under the Import feature's own prefix:
+the part's `F2:top` is `F3:F2:top` in the design that links it. The face's place in the file
+(`F3:face:5`) stays an alias, so references made before still find the face they found.
+
+So a reference made in the assembly by name follows the part when it changes shape: a joint origin
+on the top face stays on the top face when the part's sketch gains a side (which moves the top face
+from the sixth place in the file to the seventh), where a position-based name would land on a side
+face. It works through any depth of linking (a part's names are carried into the design that links
+it, and from there on), and the names are saved with the design (one pending format file). A face
+that can't be matched, or whose part name another face of the body has too, is named by its place
+as before.
+
+Costs and limits: each update meshes the part's bodies twice to match faces; a face split in two
+by the file (one that wraps all the way around) is matched to neither half and keeps its place
+name; and a feature of one part still can't refer to another part's faces (the work part's context
+is drawn, not pickable), though each of its faces now has a name that would survive the part
+changing, which a reference across files would need.
+
 ## What a reference does not do yet
 
-1. **The link is an exact copy, refreshed from the part**, not the part's own evaluation. The linked
-   bodies are imported faces: a feature of the linking design that refers to one (a joint origin
-   on a face, a fillet) holds its position, not the part's own face name, so a part that changes
-   shape can move it. Following the part's faces needs the part's persistent names to cross the
-   file boundary.
+1. **The link is an exact copy, refreshed from the part**, not the part's own evaluation. What
+   the faces are called *does* cross the file boundary (see below), but the geometry is still the
+   part's B-rep as exported and read back.
 2. **Joints refer to one occurrence, not a path of occurrences** (ROADMAP.md, "Exact full-path
    assembly joint editing"). A linked part is a component of its own with its bodies flattened into
    one Import, so a part used twice is two components and a joint is never ambiguous; the

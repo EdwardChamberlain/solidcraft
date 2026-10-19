@@ -1550,6 +1550,12 @@ pub enum FeatureKind {
         /// component (#1386). Empty in designs from before format 22: every body is built.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         skip: Vec<u64>,
+        /// What the faces are called in the design the file was made from, when it is a linked
+        /// part: for each body of the file (by index), each face's name there (empty for a face
+        /// with none). A named face takes that name here (its place in the file, `face:<k>`,
+        /// stays an alias), so a reference to it follows the part when the part changes shape.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        part_face_names: Vec<Vec<String>>,
     },
     /// Rebuild an upstream constant-section mesh with analytic planar/cylindrical faces.
     MeshConvert {

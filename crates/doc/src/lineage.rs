@@ -411,6 +411,23 @@ pub(crate) fn numbered_tool(body: Body) -> Traced {
     Traced::made(body, Some(roles))
 }
 
+/// An imported body's faces: each named as it was in the design the file was made from
+/// (`carried`, by face), its place in the file (`face:<k>`) kept as an alias; a face with no
+/// carried name, or whose carried name another face of the body has too, is named by its place.
+pub(crate) fn imported_tool(body: Body, carried: Option<&Vec<String>>) -> Traced {
+    let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for name in carried.into_iter().flatten().filter(|n| !n.is_empty()) {
+        *seen.entry(name.as_str()).or_default() += 1;
+    }
+    let roles = (0..body.face_count())
+        .map(|k| match carried.and_then(|c| c.get(k)).filter(|n| !n.is_empty() && seen.get(n.as_str()) == Some(&1)) {
+            Some(name) => vec![name.clone(), format!("face:{k}")],
+            None => vec![format!("face:{k}")],
+        })
+        .collect();
+    Traced::made(body, Some(roles))
+}
+
 /// The role of an extrude's cap at `height` along the sketch normal: on the sketch plane, above
 /// it or below it.
 pub(crate) fn extrude_cap_role(height: f64) -> String {

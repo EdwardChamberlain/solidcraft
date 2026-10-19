@@ -28,6 +28,17 @@ impl FeatureKind {
         v
     }
 
+    /// What the feature refers to, in full: the sketch ids, the feature names and the body names.
+    pub fn references(&self) -> (Vec<u64>, Vec<String>, Vec<String>) {
+        let (mut sketches, mut features, mut bodies) = (Vec::new(), Vec::new(), Vec::new());
+        self.walk_refs(&mut |r| match r {
+            Ref::Sketch(id) => sketches.push(id.0),
+            Ref::Feature(name) => features.push(name.as_ref().to_string()),
+            Ref::Body(name) => bodies.push(name.as_ref().to_string()),
+        });
+        (sketches, features, bodies)
+    }
+
     /// Point references to sketches (by id) and features (by name) at their copies, or at a
     /// feature's new name (`timeline.rename`).
     pub fn remap_refs(&mut self, sketches: &BTreeMap<u64, u64>, names: &BTreeMap<String, String>) {

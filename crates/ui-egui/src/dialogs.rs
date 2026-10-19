@@ -2624,154 +2624,158 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         }
                     }
                     Kind::Fillet { radius, chamfer, chain, ctype, distance2, angle, flip } => {
-                        if *chamfer {
-                            row_label(ui, "Chamfer Type");
-                            combo(ui, "ch_type", &CHAMFER_TYPES, ctype);
-                            ui.end_row();
-                        }
-                        let mut rtype = 0;
-                        if !*chamfer {
-                            row_label(ui, "Radius Type");
-                            rtype = extra_choice(
-                                ui,
-                                &mut d.extra,
-                                "fi_type",
-                                "type",
-                                &[
-                                    ("Constant", "constant"),
-                                    ("Chord Length", "chord"),
-                                    ("Variable", "variable"),
-                                    ("Spline", "spline"),
-                                    ("Curvature (G2)", "curvature"),
-                                ],
-                            );
-                            ui.end_row();
-                        }
-                        row_label(
-                            ui,
+                        if !advanced || section(ui, "blend_shape", if *chamfer { "Offsets" } else { "Radius" }, true) {
+                            if *chamfer {
+                                row_label(ui, "Chamfer Type");
+                                combo(ui, "ch_type", &CHAMFER_TYPES, ctype);
+                                ui.end_row();
+                            }
+                            let mut rtype = 0;
                             if !*chamfer {
-                                match rtype {
-                                    1 => "Chord Length",
-                                    2 | 3 => "Start Radius",
-                                    4 => "Equivalent Radius",
-                                    _ => "Radius",
-                                }
-                            } else if *ctype == 0 {
-                                "Distance"
-                            } else {
-                                "Distance 1"
-                            },
-                        );
-                        enter |= field(ui, radius);
-                        ui.end_row();
-                        // A constant radius too large for the edges: refused, reduced to the
-                        // largest that fits (the preview shows what was used), or tapered along
-                        // the edges to the room there.
-                        if !*chamfer && rtype == 0 {
-                            row_label(ui, "Radius Fit");
-                            let fit = extra_choice(
+                                row_label(ui, "Radius Type");
+                                rtype = extra_choice(
+                                    ui,
+                                    &mut d.extra,
+                                    "fi_type",
+                                    "type",
+                                    &[
+                                        ("Constant", "constant"),
+                                        ("Chord Length", "chord"),
+                                        ("Variable", "variable"),
+                                        ("Spline", "spline"),
+                                        ("Curvature (G2)", "curvature"),
+                                    ],
+                                );
+                                ui.end_row();
+                            }
+                            row_label(
                                 ui,
-                                &mut d.extra,
-                                "fi_fit",
-                                "fit",
-                                &[("Exact", "exact"), ("Reduce to Fit", "reduce"), ("Taper to Fit", "taper")],
-                            );
-                            ui.end_row();
-                            if fit == 1
-                                && let Some((lo, hi)) = app.preview.applied
-                            {
-                                // A range where edges apart from each other fit different radii.
-                                row_label(ui, "Applied Radius");
-                                let shown = if hi > lo {
-                                    format!("{} – {}", crate::prefs::show_mm_bare(app, lo), crate::prefs::show_mm(app, hi, 1))
-                                } else {
-                                    crate::prefs::show_mm(app, lo, 1)
-                                };
-                                ui.label(RichText::new(shown).color(t.warning));
-                                ui.end_row();
-                            }
-                        } else if !*chamfer {
-                            d.extra.remove("fit");
-                        }
-                        if *chamfer && *ctype == 1 {
-                            row_label(ui, "Distance 2");
-                            enter |= field(ui, distance2);
-                            ui.end_row();
-                        }
-                        if *chamfer && *ctype == 2 {
-                            row_label(ui, "Angle");
-                            enter |= field(ui, angle);
-                            ui.end_row();
-                        }
-                        if *chamfer && *ctype > 0 {
-                            row_label(ui, "Flip");
-                            ui.checkbox(flip, "");
-                            ui.end_row();
-                        }
-                        if !*chamfer && rtype == 2 {
-                            row_label(ui, "End Radius");
-                            enter |= extra_field(ui, &mut d.extra, "radius2", "1 mm");
-                            ui.end_row();
-                            // Which end of the first edge takes the start radius.
-                            row_label(ui, "Swap Ends");
-                            extra_check(ui, &mut d.extra, "swap_ends");
-                            ui.end_row();
-                            // Radii between the ends: position along the edge (from the start end)
-                            // and radius.
-                            let mut mids = mid_points(&d.extra);
-                            let mut remove = None;
-                            for (k, (t, r)) in mids.iter_mut().enumerate() {
-                                row_label(ui, "Mid Radius");
-                                ui.horizontal(|ui| {
-                                    ui.add(
-                                        egui::DragValue::new(t)
-                                            .speed(0.01)
-                                            .range(0.01..=0.99)
-                                            .fixed_decimals(2)
-                                            .custom_parser(crate::prefs::parse_number),
-                                    )
-                                    .on_hover_text(tr("Position along the edge, 0 at the start end, 1 at the other"));
-                                    enter |= field(ui, r);
-                                    if ui.small_button("×").on_hover_text(tr("Remove this point")).clicked() {
-                                        remove = Some(k);
+                                if !*chamfer {
+                                    match rtype {
+                                        1 => "Chord Length",
+                                        2 | 3 => "Start Radius",
+                                        4 => "Equivalent Radius",
+                                        _ => "Radius",
                                     }
-                                });
-                                ui.end_row();
-                            }
-                            if let Some(k) = remove {
-                                mids.remove(k);
-                            }
-                            row_label(ui, "");
-                            if ui.button(tr("Add Mid Radius")).clicked() && mids.len() < 20 {
-                                let t = if mids.is_empty() { 0.5 } else { (mids.iter().map(|m| m.0).fold(0.0, f64::max) + 1.0) * 0.5 };
-                                mids.push((t.min(0.99), radius.clone()));
-                            }
+                                } else if *ctype == 0 {
+                                    "Distance"
+                                } else {
+                                    "Distance 1"
+                                },
+                            );
+                            enter |= field(ui, radius);
                             ui.end_row();
-                            d.extra.insert("mid".into(), json!(mids.iter().map(|(t, r)| json!([t, r])).collect::<Vec<_>>()));
-                            if !mids.is_empty() {
-                                row_label(ui, "Smooth");
-                                extra_check(ui, &mut d.extra, "smooth");
+                            // A constant radius too large for the edges: refused, reduced to the
+                            // largest that fits (the preview shows what was used), or tapered along
+                            // the edges to the room there.
+                            if !*chamfer && rtype == 0 {
+                                row_label(ui, "Radius Fit");
+                                let fit = extra_choice(
+                                    ui,
+                                    &mut d.extra,
+                                    "fi_fit",
+                                    "fit",
+                                    &[("Exact", "exact"), ("Reduce to Fit", "reduce"), ("Taper to Fit", "taper")],
+                                );
                                 ui.end_row();
+                                if fit == 1
+                                    && let Some((lo, hi)) = app.preview.applied
+                                {
+                                    // A range where edges apart from each other fit different radii.
+                                    row_label(ui, "Applied Radius");
+                                    let shown = if hi > lo {
+                                        format!("{} – {}", crate::prefs::show_mm_bare(app, lo), crate::prefs::show_mm(app, hi, 1))
+                                    } else {
+                                        crate::prefs::show_mm(app, lo, 1)
+                                    };
+                                    ui.label(RichText::new(shown).color(t.warning));
+                                    ui.end_row();
+                                }
+                            } else if !*chamfer {
+                                d.extra.remove("fit");
+                            }
+                            if *chamfer && *ctype == 1 {
+                                row_label(ui, "Distance 2");
+                                enter |= field(ui, distance2);
+                                ui.end_row();
+                            }
+                            if *chamfer && *ctype == 2 {
+                                row_label(ui, "Angle");
+                                enter |= field(ui, angle);
+                                ui.end_row();
+                            }
+                            if *chamfer && *ctype > 0 {
+                                row_label(ui, "Flip");
+                                ui.checkbox(flip, "");
+                                ui.end_row();
+                            }
+                            if !*chamfer && rtype == 2 {
+                                row_label(ui, "End Radius");
+                                enter |= extra_field(ui, &mut d.extra, "radius2", "1 mm");
+                                ui.end_row();
+                                // Which end of the first edge takes the start radius.
+                                row_label(ui, "Swap Ends");
+                                extra_check(ui, &mut d.extra, "swap_ends");
+                                ui.end_row();
+                                // Radii between the ends: position along the edge (from the start end)
+                                // and radius.
+                                let mut mids = mid_points(&d.extra);
+                                let mut remove = None;
+                                for (k, (t, r)) in mids.iter_mut().enumerate() {
+                                    row_label(ui, "Mid Radius");
+                                    ui.horizontal(|ui| {
+                                        ui.add(
+                                            egui::DragValue::new(t)
+                                                .speed(0.01)
+                                                .range(0.01..=0.99)
+                                                .fixed_decimals(2)
+                                                .custom_parser(crate::prefs::parse_number),
+                                        )
+                                        .on_hover_text(tr("Position along the edge, 0 at the start end, 1 at the other"));
+                                        enter |= field(ui, r);
+                                        if ui.small_button("×").on_hover_text(tr("Remove this point")).clicked() {
+                                            remove = Some(k);
+                                        }
+                                    });
+                                    ui.end_row();
+                                }
+                                if let Some(k) = remove {
+                                    mids.remove(k);
+                                }
+                                row_label(ui, "");
+                                if ui.button(tr("Add Mid Radius")).clicked() && mids.len() < 20 {
+                                    let t = if mids.is_empty() { 0.5 } else { (mids.iter().map(|m| m.0).fold(0.0, f64::max) + 1.0) * 0.5 };
+                                    mids.push((t.min(0.99), radius.clone()));
+                                }
+                                ui.end_row();
+                                d.extra.insert("mid".into(), json!(mids.iter().map(|(t, r)| json!([t, r])).collect::<Vec<_>>()));
+                                if !mids.is_empty() {
+                                    row_label(ui, "Smooth");
+                                    extra_check(ui, &mut d.extra, "smooth");
+                                    ui.end_row();
+                                }
+                            }
+                            if !*chamfer && rtype == 3 {
+                                // The radius along the edge as a B-spline: its control radii from the
+                                // start end, also dragged by their handles on the edge.
+                                row_label(ui, "Swap Ends");
+                                extra_check(ui, &mut d.extra, "swap_ends");
+                                ui.end_row();
+                                let mut radii = spline_radii(&mut d.extra, radius);
+                                let n = radii.len();
+                                for (k, r) in radii.iter_mut().enumerate() {
+                                    row_label(ui, if k + 1 == n { "End Radius" } else { "Control Radius" });
+                                    enter |= field(ui, r);
+                                    ui.end_row();
+                                }
+                                d.extra.insert("radii".into(), json!(radii));
                             }
                         }
-                        if !*chamfer && rtype == 3 {
-                            // The radius along the edge as a B-spline: its control radii from the
-                            // start end, also dragged by their handles on the edge.
-                            row_label(ui, "Swap Ends");
-                            extra_check(ui, &mut d.extra, "swap_ends");
+                        if !advanced || section(ui, "blend_settings", "Settings", true) {
+                            row_label(ui, "Tangent Chain");
+                            ui.checkbox(chain, "");
                             ui.end_row();
-                            let mut radii = spline_radii(&mut d.extra, radius);
-                            let n = radii.len();
-                            for (k, r) in radii.iter_mut().enumerate() {
-                                row_label(ui, if k + 1 == n { "End Radius" } else { "Control Radius" });
-                                enter |= field(ui, r);
-                                ui.end_row();
-                            }
-                            d.extra.insert("radii".into(), json!(radii));
                         }
-                        row_label(ui, "Tangent Chain");
-                        ui.checkbox(chain, "");
-                        ui.end_row();
                     }
                     Kind::Shell { thickness } => {
                         row_label(ui, "Tangent Chain");
@@ -3004,14 +3008,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         ui.end_row();
                     }
                     Kind::Hole { diameter, depth, kind, cb_diameter, cb_depth, cs_diameter, cs_angle, opts } => {
-                        row_label(ui, "Extents");
-                        let cur = if to_object_on(&d.inputs) { 1 } else { usize::from(opts.all) * 2 };
-                        let mut ext = cur;
-                        combo(ui, "hole_ext", &["Distance", "To Object", "All"], &mut ext);
-                        opts.all = ext == 2;
-                        set_to_object(&mut d.inputs, &mut d.active, ext == 1);
-                        ui.end_row();
-                        if opts.multiple {
+                        if opts.multiple && (!advanced || section(ui, "hole_position", "Position", true)) {
                             // Every point of the picked points' sketches (standalone points and
                             // circle centres), not just the picked ones.
                             row_label(ui, "All Sketch Points");
@@ -3023,55 +3020,66 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             extra_check(ui, &mut d.extra, "flip");
                             ui.end_row();
                         }
-                        row_label(ui, "Hole Type");
-                        combo(ui, "hole_kind", &HOLE_LABELS, kind);
-                        ui.end_row();
-                        row_label(ui, "Hole Tap Type");
-                        let mut tap = usize::from(opts.tapped);
-                        combo(ui, "hole_tap", &["Simple", "Tapped"], &mut tap);
-                        opts.tapped = tap == 1;
-                        ui.end_row();
-                        if opts.tapped {
-                            row_label(ui, "Size");
-                            let r = ui.add(egui::TextEdit::singleline(&mut opts.thread).hint_text("M5"));
-                            enter |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        if !advanced || section(ui, "hole_form", "Form and Dimensions", true) {
+                            row_label(ui, "Hole Type");
+                            combo(ui, "hole_kind", &HOLE_LABELS, kind);
                             ui.end_row();
+                            row_label(ui, "Hole Tap Type");
+                            let mut tap = usize::from(opts.tapped);
+                            combo(ui, "hole_tap", &["Simple", "Tapped"], &mut tap);
+                            opts.tapped = tap == 1;
+                            ui.end_row();
+                            if opts.tapped {
+                                row_label(ui, "Size");
+                                let r = ui.add(egui::TextEdit::singleline(&mut opts.thread).hint_text("M5"));
+                                enter |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                                ui.end_row();
+                            }
+                            if *kind == 0 {
+                                row_label(ui, "Drill Point");
+                                let mut tip = usize::from(opts.angled);
+                                combo(ui, "hole_tip", &["Flat", "Angle"], &mut tip);
+                                opts.angled = tip == 1;
+                                ui.end_row();
+                            }
+                            row_label(ui, "Diameter");
+                            enter |= field(ui, diameter);
+                            ui.end_row();
+                            if *kind == 1 {
+                                row_label(ui, "Counterbore Ø");
+                                enter |= field(ui, cb_diameter);
+                                ui.end_row();
+                                row_label(ui, "Counterbore depth");
+                                enter |= field(ui, cb_depth);
+                                ui.end_row();
+                            }
+                            if *kind == 2 {
+                                row_label(ui, "Countersink Ø");
+                                enter |= field(ui, cs_diameter);
+                                ui.end_row();
+                                row_label(ui, "Countersink angle");
+                                enter |= field(ui, cs_angle);
+                                ui.end_row();
+                            }
                         }
-                        if *kind == 0 {
-                            row_label(ui, "Drill Point");
-                            let mut tip = usize::from(opts.angled);
-                            combo(ui, "hole_tip", &["Flat", "Angle"], &mut tip);
-                            opts.angled = tip == 1;
+                        if !advanced || section(ui, "hole_limits", "Limits", true) {
+                            row_label(ui, "Extents");
+                            let cur = if to_object_on(&d.inputs) { 1 } else { usize::from(opts.all) * 2 };
+                            let mut ext = cur;
+                            combo(ui, "hole_ext", &["Distance", "To Object", "All"], &mut ext);
+                            opts.all = ext == 2;
+                            set_to_object(&mut d.inputs, &mut d.active, ext == 1);
                             ui.end_row();
-                        }
-                        if !opts.all {
-                            row_label(ui, "Depth");
-                            enter |= field(ui, depth);
-                            ui.end_row();
-                        }
-                        if *kind == 0 && opts.angled {
-                            row_label(ui, "Tip Angle");
-                            enter |= field(ui, &mut opts.tip_angle);
-                            ui.end_row();
-                        }
-                        row_label(ui, "Diameter");
-                        enter |= field(ui, diameter);
-                        ui.end_row();
-                        if *kind == 1 {
-                            row_label(ui, "Counterbore Ø");
-                            enter |= field(ui, cb_diameter);
-                            ui.end_row();
-                            row_label(ui, "Counterbore depth");
-                            enter |= field(ui, cb_depth);
-                            ui.end_row();
-                        }
-                        if *kind == 2 {
-                            row_label(ui, "Countersink Ø");
-                            enter |= field(ui, cs_diameter);
-                            ui.end_row();
-                            row_label(ui, "Countersink angle");
-                            enter |= field(ui, cs_angle);
-                            ui.end_row();
+                            if !opts.all {
+                                row_label(ui, "Depth");
+                                enter |= field(ui, depth);
+                                ui.end_row();
+                            }
+                            if *kind == 0 && opts.angled {
+                                row_label(ui, "Tip Angle");
+                                enter |= field(ui, &mut opts.tip_angle);
+                                ui.end_row();
+                            }
                         }
                     }
                     Kind::Primitive { fields, operation, at, .. } => {

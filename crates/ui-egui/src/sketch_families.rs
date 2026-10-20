@@ -68,6 +68,7 @@ pub const DATUM_FAMILIES: &[Family] = &[
             "construct.axis.edge",
         ],
     },
+    Family { label: "CSYS", commands: &["datum.csys", "construct.csys.three_points", "construct.csys.on_plane"] },
     Family {
         label: "Point",
         commands: &[

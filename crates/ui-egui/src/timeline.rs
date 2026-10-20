@@ -67,6 +67,7 @@ pub(crate) fn icon_of(k: &FeatureKind) -> &'static str {
         FeatureKind::Pattern { .. } => "pattern_circ",
         FeatureKind::Mirror { .. } => "mirror",
         FeatureKind::ConstructionPlane { plane } => construction_plane_icon(plane),
+        FeatureKind::ConstructionCsys { .. } => "origin",
         FeatureKind::ConstructionAxis { def } => match def {
             AxisDef::ThroughFace { .. } => "axis_through_cylinder",
             AxisDef::NormalToFace { .. } => "axis_normal_to_face",

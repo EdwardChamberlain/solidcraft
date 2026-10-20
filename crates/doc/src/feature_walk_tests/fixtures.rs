@@ -97,6 +97,10 @@ pub(super) fn fixtures() -> Vec<(&'static str, Value)> {
             "construction_point_along",
             json!({"type": "construction_point", "def": {"type": "along_path", "path": {"type": "edge", "at": o}, "t": "pt.t"}}),
         ),
+        (
+            "construction_csys",
+            json!({"type": "construction_csys", "def": {"type": "on_plane", "plane": geo_plane("csys_plane"), "origin": {"type": "point", "p": o}}}),
+        ),
         ("split_face", json!({"type": "split_face", "faces": [o], "plane": plane("split_face")})),
         ("scale", json!({"type": "scale", "bodies": ["B"], "factor": "scale.factor", "factors": ["scale.x", "scale.y", "scale.z"]})),
         ("offset_face", json!({"type": "offset_face", "faces": [o], "distance": "offset_face.distance"})),

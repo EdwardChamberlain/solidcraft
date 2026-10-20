@@ -181,7 +181,13 @@ enum Shown {
 }
 
 fn is_construction(k: &FeatureKind) -> bool {
-    matches!(k, FeatureKind::ConstructionPlane { .. } | FeatureKind::ConstructionAxis { .. } | FeatureKind::ConstructionPoint { .. })
+    matches!(
+        k,
+        FeatureKind::ConstructionPlane { .. }
+            | FeatureKind::ConstructionAxis { .. }
+            | FeatureKind::ConstructionPoint { .. }
+            | FeatureKind::ConstructionCsys { .. }
+    )
 }
 
 fn shown_item(s: &Session, key: &str) -> Option<Shown> {

@@ -834,6 +834,11 @@ pub enum FeatureKind {
     ConstructionPoint {
         def: PointDef,
     },
+    /// A datum coordinate system: an origin and axes, with its planes, axes and origin offered
+    /// to everything that takes one (`Name:XY`, `Name:X`, `Name:O`).
+    ConstructionCsys {
+        def: crate::construct::CsysDef,
+    },
     /// Split faces (at the given points) where a tool meets them, the solid unchanged: a plane,
     /// a face of a body (`tool`, its surface extended) or a sketch's curves (`sketch`, swept
     /// along its normal). The pieces are named after the face (`#k`).
@@ -2114,6 +2119,7 @@ impl FeatureKind {
             FeatureKind::SplitFace { .. } => "SplitFaceFeature",
             FeatureKind::ConstructionAxis { .. } => "ConstructionAxis",
             FeatureKind::ConstructionPoint { .. } => "ConstructionPoint",
+            FeatureKind::ConstructionCsys { .. } => "ConstructionCsys",
             FeatureKind::Move { .. } => "MoveFeature",
             FeatureKind::Scale { .. } => "ScaleFeature",
             FeatureKind::OffsetFace { .. } => "OffsetFacesFeature",
@@ -2193,6 +2199,7 @@ impl FeatureKind {
             FeatureKind::Split { .. } => "Split",
             FeatureKind::SplitFace { .. } => "SplitFace",
             FeatureKind::ConstructionAxis { .. } => "Axis",
+            FeatureKind::ConstructionCsys { .. } => "Coordinate System",
             FeatureKind::ConstructionPoint { .. } => "Point",
             FeatureKind::Move { .. } => "Move",
             FeatureKind::Scale { .. } => "Scale",
@@ -2379,6 +2386,10 @@ pub struct Document {
     /// The modelling approach the design was made in.
     #[serde(default, skip_serializing_if = "Approach::is_classic")]
     pub approach: Approach,
+    /// The work coordinate system: the datum CSYS (by feature id) whose origin and axes are the
+    /// defaults of a new sketch and of the origin and axis choices. None: the design's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_csys: Option<u64>,
     /// Design properties (project, author…) and other tools' data, kept as they are (#1015).
     #[serde(default, skip_serializing_if = "crate::Metadata::is_empty")]
     pub metadata: crate::Metadata,
@@ -2605,6 +2616,7 @@ impl Document {
             units: default_units(),
             id: String::new(),
             approach: Approach::Classic,
+            work_csys: None,
             metadata: Default::default(),
             params: Vec::new(),
             features: Vec::new(),

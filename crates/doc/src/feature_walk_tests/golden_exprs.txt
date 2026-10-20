@@ -186,6 +186,11 @@ construction_point_along
   inputs:
     Distance (0 to 1) = pt.t (Unitless)
   expressions: pt.t
+construction_csys
+  inputs:
+    Angle = csys_plane.angle (Angle)
+    Offset = csys_plane.offset (Length)
+  expressions: csys_plane.angle, csys_plane.offset
 split_face
   inputs:
     Angle = split_face.angle (Angle)

@@ -441,6 +441,16 @@ impl Walk for AxisDef {
     construct_geometry!();
 }
 
+impl Walk for crate::construct::CsysDef {
+    fn walk_exprs<'a>(&'a self, f: &mut dyn FnMut(ExprItem<'a>)) {
+        plane_exprs(self.refs(), f)
+    }
+    fn walk_exprs_mut<'a>(&'a mut self, f: &mut dyn FnMut(ExprItemMut<'a>)) {
+        plane_exprs_mut(self.refs_mut(), f)
+    }
+    construct_geometry!();
+}
+
 impl Walk for PointDef {
     fn walk_exprs<'a>(&'a self, f: &mut dyn FnMut(ExprItem<'a>)) {
         match self {

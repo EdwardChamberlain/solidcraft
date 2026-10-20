@@ -143,6 +143,8 @@ pub enum Eye {
     Bodies(Vec<String>),
     /// A datum, by name.
     Datum(String),
+    /// A coordinate system and its parts (its planes, axes and origin), by name.
+    Datums(Vec<String>),
 }
 
 pub fn eye_of(app: &SolveApp, id: u64) -> Option<Eye> {
@@ -150,6 +152,11 @@ pub fn eye_of(app: &SolveApp, id: u64) -> Option<Eye> {
     let f = app.session.doc.feature(id)?;
     if matches!(f.kind, K::Sketch { .. }) {
         return Some(Eye::Sketch(id));
+    }
+    if matches!(f.kind, K::ConstructionCsys { .. }) {
+        let mut names = vec![f.name.clone()];
+        names.extend(csys_part_names(&f.name));
+        return Some(Eye::Datums(names));
     }
     if matches!(f.kind, K::ConstructionPlane { .. } | K::ConstructionAxis { .. } | K::ConstructionPoint { .. }) {
         return Some(Eye::Datum(f.name.clone()));
@@ -167,7 +174,20 @@ pub fn shown(app: &SolveApp, eye: &Eye) -> bool {
         Eye::Sketch(id) => crate::browser::sketch_visible(app, *id),
         Eye::Bodies(names) => names.iter().any(|b| !v.hidden_bodies.contains(b)),
         Eye::Datum(name) => !v.hidden_origin.iter().any(|h| h == name),
+        // A coordinate system is shown while its triad is (the planes are its own choice).
+        Eye::Datums(names) => names.iter().filter(|n| !is_plane_part(n)).any(|n| !v.hidden_origin.contains(n)),
     }
+}
+
+/// Is `name` a plane of a coordinate system (`Csys1:XY`)?
+fn is_plane_part(name: &str) -> bool {
+    solidcraft_engine::doc::construct::CSYS_PLANES.iter().any(|p| name.rsplit_once(':').is_some_and(|(_, part)| part == *p))
+}
+
+/// The names of a coordinate system's planes, axes and origin.
+pub fn csys_part_names(csys: &str) -> Vec<String> {
+    use solidcraft_engine::doc::construct::{CSYS_AXES, CSYS_ORIGIN, CSYS_PLANES};
+    CSYS_PLANES.iter().chain(CSYS_AXES.iter()).chain(std::iter::once(&CSYS_ORIGIN)).map(|p| format!("{csys}:{p}")).collect()
 }
 
 pub fn set_shown(app: &mut SolveApp, eye: &Eye, on: bool) {
@@ -185,6 +205,19 @@ pub fn set_shown(app: &mut SolveApp, eye: &Eye, on: bool) {
             v.hidden_origin.retain(|h| h != name);
             if !on {
                 v.hidden_origin.push(name.clone());
+            }
+        }
+        Eye::Datums(names) => {
+            let v = &mut app.session.visibility;
+            for name in names {
+                // Showing brings back the triad; the planes are shown or hidden by themselves.
+                if on && is_plane_part(name) {
+                    continue;
+                }
+                v.hidden_origin.retain(|h| h != name);
+                if !on {
+                    v.hidden_origin.push(name.clone());
+                }
             }
         }
     }

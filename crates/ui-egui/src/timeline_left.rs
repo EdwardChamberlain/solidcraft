@@ -712,11 +712,17 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
         }
         slots.push(VerticalSlot { y: ui.cursor().top(), position: index, group: group_id, indent_group });
         let indent = group_id.map(|id| (group_depth(&groups, id) + 1) as f32 * 14.0).unwrap_or(0.0);
-        let has_patterns = matches!(kind, TimelineKind::Sketch) && crate::sketch_pattern_tree::has_patterns(app, *id);
-        let pattern_key = format!("timeline/sketch/{id}/patterns");
-        let patterns_open = crate::browser::is_open(app, &pattern_key, true);
+        // A datum coordinate system lists its parts under it (closed to start with).
+        let is_csys =
+            advanced && app.session.doc.feature(*id).is_some_and(|f| matches!(f.kind, solidcraft_engine::doc::FeatureKind::ConstructionCsys { .. }));
+        let is_work = app.session.doc.work_csys == Some(*id);
+        let has_patterns = is_csys || (matches!(kind, TimelineKind::Sketch) && crate::sketch_pattern_tree::has_patterns(app, *id));
+        let pattern_key = if is_csys { format!("timeline/csys/{id}/parts") } else { format!("timeline/sketch/{id}/patterns") };
+        let patterns_open = crate::browser::is_open(app, &pattern_key, !is_csys);
         let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::click_and_drag());
-        let fold_rect = Rect::from_min_size(rect.left_top() + vec2(indent, 0.0), vec2(16.0, rect.height()));
+        // In the Advanced tree the eye is first, then the fold arrow, then the icon.
+        let lead = if advanced { 20.0 } else { 0.0 };
+        let fold_rect = Rect::from_min_size(rect.left_top() + vec2(indent + lead, 0.0), vec2(16.0, rect.height()));
         let eye = if advanced { crate::shell::part_nav_tree::eye_of(app, *id) } else { None };
         let eye_rect = Rect::from_center_size(pos2(rect.left() + 11.0 + indent, rect.center().y), vec2(16.0, 16.0));
         let on_eye = advanced && response.interact_pointer_pos().is_some_and(|p| eye_rect.contains(p));
@@ -744,7 +750,6 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
             crate::icons::glyphs::disclosure(ui.painter(), fold_rect.shrink(3.0), patterns_open, t.text_dim);
             crate::scenario::publish_handle(&format!("timeline-sketch-fold:{name}"), fold_rect.center());
         }
-        let lead = if advanced { 20.0 } else { 0.0 };
         if advanced {
             // The eye is always there so the names line up; a row with nothing to hide has none.
             if let Some(eye) = &eye {
@@ -769,6 +774,8 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
             ui.painter().line_segment([icon_rect.left_bottom(), icon_rect.right_top()], Stroke::new(1.5, t.text_dim));
         }
         let text_colour = match &related {
+            // The work coordinate system stands out.
+            _ if is_work => t.accent,
             Some(r) if r.parents.contains(id) => t.warning,
             Some(r) if r.children.contains(id) => t.preview_add,
             _ if rolled || *suppressed => t.text_dim,
@@ -818,7 +825,7 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
         if response.clicked() && on_eye {
             crate::shell::part_nav_tree::toggle(app, *id);
         } else if response.clicked() && on_fold {
-            crate::browser::toggle(app, &pattern_key, true);
+            crate::browser::toggle(app, &pattern_key, !is_csys);
         } else if response.clicked() && crate::tree_pick::pick_feature(app, *id, advanced) {
             // A dialog waiting for a pick took it: the feature is not also selected.
         } else if response.clicked() {
@@ -850,6 +857,14 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
                 let _ = app.run_heavy("timeline.suppress", json!({"feature": id}));
                 ui.close();
             }
+            if is_csys {
+                let (label, params) =
+                    if is_work { ("Release Work Coordinate System", json!({})) } else { ("Make Work Coordinate System", json!({"csys": id})) };
+                if ui.button(label).clicked() {
+                    let _ = app.run("csys.set_work", params);
+                    ui.close();
+                }
+            }
             if ui.button("Roll Back Here").clicked() {
                 let _ = app.run_heavy("timeline.roll_to", json!({"feature": id}));
                 ui.close();
@@ -867,7 +882,11 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
         });
         if has_patterns && patterns_open {
             let depth = group_id.map_or(1, |group| group_depth(&groups, group) + 2);
-            crate::sketch_pattern_tree::rows(app, ui, *id, depth, "timeline", None, false);
+            if is_csys {
+                crate::browser::csys_rows(app, ui, name, depth);
+            } else {
+                crate::sketch_pattern_tree::rows(app, ui, *id, depth, "timeline", None, false);
+            }
         }
         previous_visible_group = group_id;
     }

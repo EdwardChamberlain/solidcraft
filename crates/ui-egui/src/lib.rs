@@ -151,6 +151,8 @@ pub mod recovery_ui;
 pub mod ref_images;
 pub mod render_workspace;
 #[cfg(test)]
+mod replace_menu_tests;
+#[cfg(test)]
 mod revolve_edit_tests;
 #[cfg(test)]
 mod revolve_manipulator_tests;

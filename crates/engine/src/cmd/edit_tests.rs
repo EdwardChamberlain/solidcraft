@@ -522,3 +522,68 @@ fn edit_refuses_unknown_fields() {
     let def = run(&mut s, "timeline.inspect", json!({"feature": "Twin"}))["definition"].clone();
     assert_eq!(def["combine"], json!(true), "{def}");
 }
+
+fn rect(s: &mut Session, name: &str, w: f64) {
+    run(s, "sketch.create", json!({"plane": "XY", "name": name}));
+    run(s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [w, 10]}));
+    run(s, "sketch.finish", json!({}));
+}
+
+fn volume(s: &mut Session) -> f64 {
+    run(s, "inspect.measure", json!({}))["total"]["volume_mm3"].as_f64().unwrap()
+}
+
+#[test]
+fn replace_a_sketch_points_the_features_that_used_it_at_another() {
+    let mut s = Session::default();
+    rect(&mut s, "Narrow", 10.0);
+    rect(&mut s, "Wide", 30.0);
+    run(&mut s, "solid.extrude", json!({"sketch": "Narrow", "distance": 5}));
+    assert!((volume(&mut s) - 500.0).abs() < 1e-6);
+    // Wide is before nothing that uses Narrow? It comes after Narrow but before the extrude: yes.
+    let r = run(&mut s, "timeline.replacements", json!({"feature": "Narrow"}));
+    assert_eq!(r["replacements"][0]["name"], "Wide", "{r}");
+    run(&mut s, "timeline.replace", json!({"feature": "Narrow", "with": "Wide"}));
+    assert!((volume(&mut s) - 1500.0).abs() < 1e-6, "the extrude follows the other sketch");
+    // Undo puts it back.
+    run(&mut s, "edit.undo", json!({}));
+    assert!((volume(&mut s) - 500.0).abs() < 1e-6);
+}
+
+#[test]
+fn replace_a_datum_moves_the_sketch_placed_on_it() {
+    let mut s = Session::default();
+    run(&mut s, "construct.plane.offset", json!({"base": "XY", "offset": 5, "name": "Low"}));
+    run(&mut s, "construct.plane.offset", json!({"base": "XY", "offset": 25, "name": "High"}));
+    run(&mut s, "sketch.create", json!({"plane": "Low", "name": "S"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [10, 10]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "timeline.replace", json!({"feature": "Low", "with": "High"}));
+    let st = s.model.state();
+    let plane = st.sketches.iter().find(|k| k.feature == s.doc.find_feature("S").unwrap().id).map(|k| k.plane).unwrap();
+    assert!((plane.origin.z - 25.0).abs() < 1e-9, "{plane:?}");
+}
+
+#[test]
+fn replace_refuses_what_would_not_hold_together() {
+    let mut s = Session::default();
+    rect(&mut s, "A", 10.0);
+    run(&mut s, "solid.extrude", json!({"sketch": "A", "distance": 5, "name": "Pad"}));
+    rect(&mut s, "Late", 20.0);
+    for p in [
+        json!({"feature": "A", "with": "A"}),
+        json!({"feature": "A", "with": "Pad"}),
+        json!({"feature": "Pad", "with": "A"}),
+        json!({"feature": "A", "with": "Late"}),
+        json!({"feature": "A"}),
+        json!({"feature": "A", "with": "nope"}),
+        json!({"feature": "A", "with": 99999}),
+    ] {
+        assert!(s.execute("timeline.replace", &p).is_err(), "{p}");
+    }
+    assert!(s.doc.find_feature("A").is_some());
+    // Nothing built on a datum: nothing to replace.
+    run(&mut s, "construct.plane.offset", json!({"base": "XY", "offset": 5, "name": "P1"}));
+    run(&mut s, "construct.plane.offset", json!({"base": "XY", "offset": 6, "name": "P2"}));
+    assert!(s.execute("timeline.replace", &json!({"feature": "P2", "with": "P1"})).is_err(), "nothing uses P2");
+}

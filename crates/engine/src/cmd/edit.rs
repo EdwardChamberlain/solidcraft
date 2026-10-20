@@ -54,6 +54,13 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("timeline.dependents", "Feature Dependents", dependents).icon("graph")
         .noundo()
         .params("feature: id|name → features deleted with it, and features that would fail without it"),
+    CommandSpec::new("timeline.replace", "Replace Feature", replace).icon("edit").params(
+        "feature: id|name (a sketch or a datum), with: id|name (another of the same kind, earlier than everything that uses `feature`, and not built on it): every feature that used `feature` uses `with` instead; `feature` stays, unused",
+    ),
+    CommandSpec::new("timeline.replacements", "Feature Replacements", replacements)
+        .icon("edit")
+        .noundo()
+        .params("feature: id|name → replacements: [{id, name}] the features `timeline.replace` takes for it"),
     CommandSpec::new("timeline.suppress", "Suppress Feature", suppress).icon("suppress").params("feature: id|name, suppressed?: bool (default toggles)"),
     CommandSpec::new("timeline.edit", "Edit Feature", edit_feature).icon("edit").params(
         "feature: id|name, set: {fields to change, merged into the feature's definition as timeline.inspect returns it, \
@@ -204,6 +211,109 @@ fn rename(s: &mut Session, p: &Value) -> Result<Value> {
         f.kind.remap_refs(&sketches, &names);
     }
     Ok(json!({"feature": id, "name": name}))
+}
+
+/// Does feature `f` refer to the sketch or datum `id` / `name`?
+fn uses(f: &solidcraft_doc::Feature, id: u64, name: &str) -> bool {
+    let (sketches, features, _) = f.kind.references();
+    if sketches.contains(&id) || features.iter().any(|n| n.eq_ignore_ascii_case(name)) {
+        return true;
+    }
+    f.kind.datum_deps().is_some_and(|d| d.sketches.contains(&id) || d.features.iter().any(|n| n.eq_ignore_ascii_case(name)))
+}
+
+/// Only sketches and datums can be replaced: the picks of the features after them name faces and
+/// edges the replacement would not have.
+fn replaceable(kind: &FeatureKind) -> bool {
+    matches!(
+        kind,
+        FeatureKind::Sketch { .. }
+            | FeatureKind::ConstructionPlane { .. }
+            | FeatureKind::ConstructionAxis { .. }
+            | FeatureKind::ConstructionPoint { .. }
+            | FeatureKind::ConstructionCsys { .. }
+    )
+}
+
+/// The features `with` could replace `id`: the same kind, before everything that uses `id`, and
+/// not built on it.
+fn replacement_ids(s: &Session, id: u64) -> Vec<u64> {
+    let Some(old) = s.doc.feature(id) else { return Vec::new() };
+    if !replaceable(&old.kind) {
+        return Vec::new();
+    }
+    let (old_name, same) = (old.name.clone(), std::mem::discriminant(&old.kind));
+    // What is built on it, however far along.
+    let mut built = vec![id];
+    let mut names = vec![old_name.clone()];
+    let mut first_user = usize::MAX;
+    for (i, f) in s.doc.features.iter().enumerate() {
+        if f.id == id {
+            continue;
+        }
+        let direct = uses(f, id, &old_name);
+        let chained = built.iter().zip(&names).any(|(b, n)| uses(f, *b, n));
+        if direct || chained {
+            built.push(f.id);
+            names.push(f.name.clone());
+            if direct {
+                first_user = first_user.min(i);
+            }
+        }
+    }
+    s.doc
+        .features
+        .iter()
+        .enumerate()
+        .filter(|(i, f)| f.id != id && !built.contains(&f.id) && *i < first_user && std::mem::discriminant(&f.kind) == same)
+        .map(|(_, f)| f.id)
+        .collect()
+}
+
+fn replacements(s: &mut Session, p: &Value) -> Result<Value> {
+    let id = feature_id(s, p.get("feature"), "timeline.replacements")?;
+    let list: Vec<Value> = replacement_ids(s, id).into_iter().filter_map(|k| s.doc.feature(k).map(|f| json!({"id": f.id, "name": f.name}))).collect();
+    Ok(json!({"replacements": list}))
+}
+
+fn replace(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "timeline.replace";
+    let id = feature_id(s, p.get("feature"), cmd)?;
+    let with = match p.get("with") {
+        Some(v) => feature_id(s, Some(v), cmd).map_err(|_| bad(cmd, "`with` must be the id or name of a feature"))?,
+        None => return Err(bad(cmd, "`with` (the feature to use instead) is required")),
+    };
+    if id == with {
+        return Err(bad(cmd, "a feature cannot replace itself"));
+    }
+    let (Some(old), Some(new)) = (s.doc.feature(id), s.doc.feature(with)) else { return Err(bad(cmd, "feature")) };
+    if !replaceable(&old.kind) {
+        return Err(bad(cmd, "only a sketch or a datum can be replaced"));
+    }
+    if std::mem::discriminant(&old.kind) != std::mem::discriminant(&new.kind) {
+        return Err(bad(cmd, format!("`{}` is not the same kind of feature as `{}`", new.name, old.name)));
+    }
+    if !replacement_ids(s, id).contains(&with) {
+        return Err(bad(cmd, format!("`{}` comes after something that uses `{}`, or is built on it", new.name, old.name)));
+    }
+    let (old_name, new_name) = (old.name.clone(), new.name.clone());
+    let is_sketch = matches!(old.kind, FeatureKind::Sketch { .. });
+    let ids = if is_sketch { BTreeMap::from([(id, with)]) } else { BTreeMap::new() };
+    let names = if is_sketch { BTreeMap::new() } else { BTreeMap::from([(old_name.clone(), new_name.clone())]) };
+    let none = BTreeMap::new();
+    let mut next = (*s.doc).clone();
+    let mut changed = Vec::new();
+    for f in next.features.iter_mut().filter(|f| f.id != id && f.id != with) {
+        if uses(f, id, &old_name) {
+            f.remap_clone(&ids, &names, &none, &none).map_err(|e| bad(cmd, e.to_string()))?;
+            changed.push(f.name.clone());
+        }
+    }
+    if changed.is_empty() {
+        return Err(bad(cmd, format!("nothing uses `{old_name}`")));
+    }
+    *s.doc_mut() = next;
+    Ok(json!({"replaced": old_name, "with": new_name, "changed": changed}))
 }
 
 fn timeline_group_id(s: &Session, p: &Value, cmd: &str) -> Result<u64> {

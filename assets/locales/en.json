@@ -650,6 +650,8 @@
   "cmd.timeline_redefine": "Edit Feature",
   "cmd.timeline_rename": "Rename",
   "cmd.timeline_reorder": "Reorder Feature",
+  "cmd.timeline_replace": "Replace Feature",
+  "cmd.timeline_replacements": "Feature Replacements",
   "cmd.timeline_roll_to": "Roll History Marker",
   "cmd.timeline_rollback": "Move Timeline Marker",
   "cmd.timeline_suppress": "Suppress Feature",

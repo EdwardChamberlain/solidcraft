@@ -650,6 +650,8 @@
   "cmd.timeline_redefine": "フィーチャーを編集",
   "cmd.timeline_rename": "名前を変更",
   "cmd.timeline_reorder": "フィーチャーの順序を変更",
+  "cmd.timeline_replace": "フィーチャーを置換",
+  "cmd.timeline_replacements": "フィーチャーの置換候補",
   "cmd.timeline_roll_to": "履歴マーカーを移動",
   "cmd.timeline_rollback": "タイムライン マーカーを移動",
   "cmd.timeline_suppress": "フィーチャーを抑制",

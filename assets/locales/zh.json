@@ -650,6 +650,8 @@
   "cmd.timeline_redefine": "编辑特征",
   "cmd.timeline_rename": "重命名",
   "cmd.timeline_reorder": "重排特征",
+  "cmd.timeline_replace": "替换特征",
+  "cmd.timeline_replacements": "特征替换候选",
   "cmd.timeline_roll_to": "滚动历史标记",
   "cmd.timeline_rollback": "移动时间线标记",
   "cmd.timeline_suppress": "抑制特征",

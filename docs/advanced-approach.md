@@ -104,6 +104,15 @@ is built and what is not yet.
   on a face depends on the feature that made the face. The Part Navigator's parent and child
   colours show it.
 
+## Replacing a sketch or a datum
+
+A feature's menu in the Part Navigator has **Replace With** for a sketch or a datum: pick another of
+its kind and every feature that used it (an extrude's sketch, a sketch's plane, a datum built on a
+datum) uses the other instead (`timeline.replace`). The list offers only what is earlier than the
+first feature that uses it and not built on it, so nothing can end up depending on itself. The
+replaced feature stays in the tree, unused. Features that built on a body's faces and edges cannot
+be replaced this way: their picks name geometry a replacement would not have.
+
 ## Face mates
 
 **Mate** (Assembly tab, `mate.create`) positions one component against another from two picked faces.

@@ -1593,12 +1593,15 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             note(ui, app.tr("settings.frame_rate_note"));
         }
         5 => {
-            ui.label(crate::i18n::tr_label("Project face edges into new sketches"));
-            let mut auto = app.session.auto_project;
-            if ui.checkbox(&mut auto, "").changed() {
-                let _ = app.run("sketch.auto_project", json!({ "value": auto }));
+            // The Advanced approach's sketches hold only what is drawn in them: no setting.
+            if app.preferences.modelling_approach != ModellingApproach::Advanced {
+                ui.label(crate::i18n::tr_label("Project face edges into new sketches"));
+                let mut auto = app.session.auto_project;
+                if ui.checkbox(&mut auto, "").changed() {
+                    let _ = app.run("sketch.auto_project", json!({ "value": auto }));
+                }
+                ui.end_row();
             }
-            ui.end_row();
         }
         _ => {
             ui.label(crate::i18n::tr_label("Click selects whole bodies"));

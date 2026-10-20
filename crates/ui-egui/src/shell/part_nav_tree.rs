@@ -86,6 +86,27 @@ fn build(app: &SolveApp) -> Graph {
                 parents.extend(made.get(name.as_str()).copied());
             }
         }
+        // A datum depends on what it was built from: the features that made the faces and edges
+        // it picked, the datums and sketches it uses, and the bodies its vertices lie on.
+        if let Some(d) = f.kind.datum_deps() {
+            parents.extend(named_features(&d.names).filter(|id| doc.feature(*id).is_some()));
+            parents.extend(d.features.iter().filter_map(|n| by_name.get(&n.to_ascii_lowercase()).copied()));
+            parents.extend(d.sketches.into_iter().filter(|s| doc.feature(*s).is_some()));
+            let before = results.iter().position(|r| r.id == f.id).and_then(|i| i.checked_sub(1)).and_then(|i| results.get(i));
+            for p in &d.places {
+                let on = before.into_iter().flat_map(|r| r.state.bodies.iter()).find(|b| {
+                    let bb = b.mesh().bounds();
+                    let pad = bb.diagonal() * 1e-3 + 1e-6;
+                    p.x >= bb.min.x - pad
+                        && p.x <= bb.max.x + pad
+                        && p.y >= bb.min.y - pad
+                        && p.y <= bb.max.y + pad
+                        && p.z >= bb.min.z - pad
+                        && p.z <= bb.max.z + pad
+                });
+                parents.extend(on.and_then(|b| made.get(b.name.as_str()).copied()));
+            }
+        }
         parents.remove(&f.id);
         g.parents.insert(f.id, parents);
         for name in born.get(&f.id).into_iter().flatten() {

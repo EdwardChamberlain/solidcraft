@@ -93,6 +93,17 @@ it into the dialog. A pattern's direction takes an axis, an edge or a planar fac
 See [advanced-approach-files.md](advanced-approach-files.md) for how parts reference parts, what
 is built and what is not yet.
 
+## Sketches and datums
+
+- A sketch holds only what is drawn in it. Sketching on a face does not carry the face's edges in
+  (Fusion does, by default), so a circle on a face is the one region, and picking it picks the
+  circle. The Project tool is still there for a deliberate reference, and `sketch.create` takes
+  `project_edges: true`. The Preferences row for projecting face edges is hidden in this approach.
+- A datum depends on what it was built from: the features that made the faces, edges and
+  vertices it picked, the datums it uses and the sketches whose points it takes. A sketch placed
+  on a face depends on the feature that made the face. The Part Navigator's parent and child
+  colours show it.
+
 ## Face mates
 
 **Mate** (Assembly tab, `mate.create`) positions one component against another from two picked faces.

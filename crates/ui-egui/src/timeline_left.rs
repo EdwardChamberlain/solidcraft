@@ -869,6 +869,29 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
                 let _ = app.run_heavy("timeline.roll_to", json!({"feature": id}));
                 ui.close();
             }
+            // A sketch or datum can be replaced by another of its kind: what used it uses that.
+            let replacements: Vec<(u64, String)> = app
+                .session
+                .execute("timeline.replacements", &json!({"feature": id}))
+                .ok()
+                .and_then(|r| r["replacements"].as_array().cloned())
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|r| Some((r["id"].as_u64()?, r["name"].as_str()?.to_string())))
+                .collect();
+            if !replacements.is_empty() {
+                let r = ui.menu_button("Replace With", |ui| {
+                    for (with, label) in &replacements {
+                        let r = ui.button(label);
+                        crate::scenario::publish_handle(&format!("replace:{label}"), r.rect.center());
+                        if r.clicked() {
+                            let _ = app.run_heavy("timeline.replace", json!({"feature": id, "with": with}));
+                            ui.close();
+                        }
+                    }
+                });
+                crate::scenario::publish_handle("replace", r.response.rect.center());
+            }
             ui.separator();
             clipboard_buttons(app, ui, *id);
             message_button(app, ui, *id);

@@ -83,6 +83,8 @@ pub enum PointDef {
     EdgeAndPlane { edge: GeoRef, plane: GeoRef },
     /// At a fraction `t` (0…1) of the way along an edge or sketch curve.
     AlongPath { path: GeoRef, t: crate::Expr },
+    /// A fraction `t` (0…1, default 0.5: the middle) of the way from point `a` to point `b`.
+    Between { a: GeoRef, b: GeoRef, t: crate::Expr },
 }
 
 /// How a coordinate system (a datum CSYS) is defined. Its frame is a [`Plane`]: the origin, the
@@ -509,6 +511,14 @@ pub(crate) fn resolve_point(ctx: &Ctx, d: &PointDef) -> Result<Vec3> {
             let t = Document::eval_in(ctx.vals, t, Kind::Unitless)?;
             along(&path_points(ctx, path)?, t).map(|(p, _)| p).ok_or_else(|| bad("the path has no length"))
         }
+        PointDef::Between { a, b, t } => {
+            let t = Document::eval_in(ctx.vals, t, Kind::Unitless)?;
+            let (pa, pb) = (point(ctx, a)?, point(ctx, b)?);
+            if !t.is_finite() {
+                return Err(bad("the position is not a number"));
+            }
+            Ok(pa + (pb - pa) * t)
+        }
     }
 }
 
@@ -701,6 +711,7 @@ impl PointDef {
             PointDef::ThreePlanes { a, b, c } => vec![a, b, c],
             PointDef::EdgeAndPlane { edge, plane } => vec![edge, plane],
             PointDef::AlongPath { path, .. } => vec![path],
+            PointDef::Between { a, b, .. } => vec![a, b],
         }
     }
 
@@ -712,6 +723,7 @@ impl PointDef {
             PointDef::ThreePlanes { a, b, c } => vec![a, b, c],
             PointDef::EdgeAndPlane { edge, plane } => vec![edge, plane],
             PointDef::AlongPath { path, .. } => vec![path],
+            PointDef::Between { a, b, .. } => vec![a, b],
         }
     }
 }

@@ -87,6 +87,10 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SOLID", "CONSTRUCT")
         .icon("point_along_path")
         .params("path: edge or sketch curve ref; t: expr, 0…1 along it (default 0.5); name?"),
+    CommandSpec::new("construct.point.between", "Point Between Two Points", point_between)
+        .at("SOLID", "CONSTRUCT")
+        .icon("point_between")
+        .params("a, b: point refs (vertices, sketch points, points); t: expr, 0…1 of the way from a to b (default 0.5, the middle); name?"),
     CommandSpec::new("construct.plane.midplane", "Midplane", plane_mid)
         .at("SOLID", "CONSTRUCT")
         .icon("plane_midplane")
@@ -243,6 +247,13 @@ fn point_along(s: &mut Session, p: &Value) -> Result<Value> {
     point(s, p, PointDef::AlongPath { path, t })
 }
 
+fn point_between(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "construct.point.between";
+    let (a, b) = (geo(s, p.get("a"), cmd, "a")?, geo(s, p.get("b"), cmd, "b")?);
+    let t = t_param(s, p, cmd)?;
+    point(s, p, PointDef::Between { a, b, t })
+}
+
 fn plane_mid(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "construct.plane.midplane";
     let (a, b) = (geo(s, p.get("a"), cmd, "a")?, geo(s, p.get("b"), cmd, "b")?);
@@ -349,6 +360,7 @@ fn datum_point(s: &mut Session, p: &Value) -> Result<Value> {
             ("center", "construct.point.center"),
             ("edge_plane", "construct.point.edge_plane"),
             ("along_path", "construct.point.along_path"),
+            ("between", "construct.point.between"),
         ],
     )
 }

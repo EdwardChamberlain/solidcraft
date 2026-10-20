@@ -393,6 +393,7 @@
   "cmd.construct_plane_three_points": "3点を通る平面",
   "cmd.construct_plane_two_edges": "2エッジを通る平面",
   "cmd.construct_point_along_path": "パスに沿った点",
+  "cmd.construct_point_between": "2点間の点",
   "cmd.construct_point_center": "円/球/トーラスの中心点",
   "cmd.construct_point_edge_plane": "エッジと平面の交点",
   "cmd.construct_point_three_planes": "3平面の交点",

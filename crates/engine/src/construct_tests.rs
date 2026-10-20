@@ -161,6 +161,20 @@ fn point_along_a_path() {
 }
 
 #[test]
+fn point_between_two_points() {
+    let mut s = part();
+    run(&mut s, "construct.point.between", json!({"a": {"vertex": [0, 0, 0]}, "b": {"vertex": [40, 30, 20]}, "name": "Mid"}));
+    assert!(near(point(&s, "Mid"), Vec3::new(20.0, 15.0, 10.0)), "{:?}", point(&s, "Mid"));
+    run(&mut s, "construct.point.between", json!({"a": {"vertex": [0, 0, 0]}, "b": {"vertex": [40, 30, 20]}, "t": 0.25, "name": "Q"}));
+    assert!(near(point(&s, "Q"), Vec3::new(10.0, 7.5, 5.0)), "{:?}", point(&s, "Q"));
+    // The datum umbrella takes the method too, and hostile input is refused.
+    run(&mut s, "datum.point", json!({"type": "between", "a": {"vertex": [0, 0, 0]}, "b": {"vertex": [40, 0, 0]}, "name": "D"}));
+    for p in [json!({}), json!({"a": {"vertex": [0, 0, 0]}}), json!({"a": {"vertex": [0, 0, 0]}, "b": {"vertex": [40, 0, 0]}, "t": "oops"})] {
+        assert!(s.execute("construct.point.between", &p).is_err(), "{p}");
+    }
+}
+
+#[test]
 fn midplane_between_parallel_and_meeting_faces() {
     let mut s = part();
     run(&mut s, "construct.plane.midplane", json!({"a": "XY", "b": {"face": [20, 15, 20]}, "name": "M"}));

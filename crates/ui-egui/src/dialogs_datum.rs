@@ -115,6 +115,13 @@ pub static METHODS: &[Method] = &[
         value: Some(("t", "Position (0 to 1)", "0.5")),
     },
     Method {
+        class: Class::Point,
+        cmd: "construct.point.between",
+        label: "Between Two Points",
+        inputs: &[("a", "First point", POINT_REF), ("b", "Second point", POINT_REF)],
+        value: Some(("t", "Position (0 to 1)", "0.5")),
+    },
+    Method {
         class: Class::Plane,
         cmd: "construct.plane.two_edges",
         label: "Two Edges",
@@ -328,6 +335,11 @@ pub fn infer(app: &SolveApp, d: &Dialog) -> Result<(&'static str, Value), String
             p["plane"] = r(planes[0])?;
             ("construct.point.edge_plane", p)
         }
+        (Class::Point, (0, 0, 0, 2)) => {
+            let mut p = refs(&points, &["a", "b"])?;
+            p["t"] = json!(value);
+            ("construct.point.between", p)
+        }
         (Class::Point, (0, 0, 1, 0)) => {
             let mut p = refs(&lines, &["path"])?;
             p["t"] = json!(value);
@@ -442,6 +454,7 @@ pub fn refill(app: &SolveApp, kind: &FeatureKind) -> Option<Dialog> {
             PointDef::Center { of } => ("construct.point.center", vec![of], None),
             PointDef::EdgeAndPlane { edge, plane } => ("construct.point.edge_plane", vec![edge, plane], None),
             PointDef::AlongPath { path, t } => ("construct.point.along_path", vec![path], Some(t.to_string())),
+            PointDef::Between { a, b, t } => ("construct.point.between", vec![a, b], Some(t.to_string())),
         },
         FeatureKind::ConstructionCsys { def } => match def {
             solidcraft_engine::doc::construct::CsysDef::ThreePoints { origin, x, y } => ("construct.csys.three_points", vec![origin, x, y], None),

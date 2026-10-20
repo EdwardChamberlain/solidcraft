@@ -393,6 +393,7 @@
   "cmd.construct_plane_three_points": "过三点的平面",
   "cmd.construct_plane_two_edges": "过两条边的平面",
   "cmd.construct_point_along_path": "沿路径的点",
+  "cmd.construct_point_between": "两点之间的点",
   "cmd.construct_point_center": "圆/球/圆环中心的点",
   "cmd.construct_point_edge_plane": "边与平面交点",
   "cmd.construct_point_three_planes": "过三个平面的点",

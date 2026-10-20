@@ -88,7 +88,7 @@ const ADVANCED_DATUM: &[&str] = &["datum.plane", "datum.axis", "datum.point", "d
 const ADVANCED_PATTERN: &[&str] = &["solid.pattern", "solid.mirror"];
 
 const ADVANCED_COMPONENT: &[&str] =
-    &["component.new_part", "component.insert_design", "component.activate", "component.update_links", "component.break_link"];
+    &["component.new_part", "component.insert_design", "occurrence.pattern", "component.activate", "component.update_links", "component.break_link"];
 
 const ADVANCED_JOINT: &[&str] =
     &["joint.origin", "joint.create", "mate.create", "joint.as_built", "joint.rigid_group", "joint.drive", "explode.create", "inspect.interference"];

@@ -204,6 +204,54 @@ fn one_row(app: &mut SolveApp, ui: &mut egui::Ui, row: &Row) {
                 }
                 ui.close();
             }
+            if let Some(first) = row.placements.first().copied() {
+                if ui.button("Pattern Component…").clicked() {
+                    app.start("occurrence.pattern");
+                    // The component is picked: its first body stands for it.
+                    let body = app.session.occurrence_bodies(&[first], true).ok().and_then(|b| b.into_iter().next());
+                    if let (Some(body), Some(d)) = (body, app.dialog.as_mut())
+                        && let Some(input) = d.inputs.first_mut()
+                    {
+                        input.items = vec![solidcraft_engine::Sel::Body { name: body }];
+                        d.advance();
+                    }
+                    ui.close();
+                }
+                // Another component in its place, keeping where it is, whether it is fixed and its joints.
+                let others: Vec<(u64, String)> = app
+                    .session
+                    .doc
+                    .components
+                    .iter()
+                    .filter(|c| c.id != row.component)
+                    .filter(|c| {
+                        row.placements.iter().all(|id| {
+                            app.session
+                                .doc
+                                .occurrences
+                                .iter()
+                                .find(|o| o.id == *id)
+                                .is_some_and(|o| !app.session.doc.component_within(o.parent, c.id))
+                        })
+                    })
+                    .map(|c| (c.id, c.name.clone()))
+                    .collect();
+                if !others.is_empty() {
+                    let r = ui.menu_button("Replace With", |ui| {
+                        for (id, name) in &others {
+                            let r = ui.button(name);
+                            crate::scenario::publish_handle(&format!("assembly_nav:replace:{name}"), r.rect.center());
+                            if r.clicked() {
+                                if let Err(e) = app.run("component.replace", json!({"component": row.component, "with": id})) {
+                                    app.set_status(e, true);
+                                }
+                                ui.close();
+                            }
+                        }
+                    });
+                    crate::scenario::publish_handle(&format!("assembly_nav:replace:{}", row.name), r.response.rect.center());
+                }
+            }
             if row.path.is_some() && ui.button(app.tr("ui.break_link")).clicked() {
                 if let Err(e) = app.run("component.break_link", json!({"component": row.component})) {
                     app.set_status(e, true);

@@ -34,7 +34,8 @@ pub const SNAPS: u16 = FACES | EDGES | VERTICES;
 const MATES: [&str; 8] = ["touch", "align", "concentric", "distance", "parallel", "perpendicular", "angle", "fix"];
 const MATE_LABELS: [&str; 8] = ["Touch", "Align", "Concentric", "Distance", "Parallel", "Perpendicular", "Angle", "Fix"];
 /// Commands whose effect is where occurrences sit (previewed on the placed model).
-const MOVES: [&str; 13] = [
+const MOVES: [&str; 14] = [
+    "occurrence.pattern",
     "joint.create",
     "mate.create",
     "joint.as_built",
@@ -57,6 +58,8 @@ pub enum Asm {
         activate: bool,
     },
     Joint(Box<JointForm>),
+    /// Pattern Component: instances of a component, in a line or round an axis.
+    Pattern(Box<PatternForm>),
     JointOrigin {
         name: String,
         hover: Hover,
@@ -146,6 +149,22 @@ impl JointForm {
     }
 }
 
+/// The Pattern Component dialog's values.
+#[derive(Clone, Debug)]
+pub struct PatternForm {
+    /// 0: linear, 1: circular.
+    pub layout: usize,
+    pub count: String,
+    pub spacing: String,
+    pub angle: String,
+}
+
+impl PatternForm {
+    fn new() -> PatternForm {
+        PatternForm { layout: 0, count: "3".into(), spacing: "50 mm".into(), angle: "360 deg".into() }
+    }
+}
+
 impl Asm {
     pub fn title(&self) -> &'static str {
         match self {
@@ -165,12 +184,13 @@ impl Asm {
             },
             Asm::Cam(_) => "CAM",
             Asm::Interference { .. } => "INTERFERENCE",
+            Asm::Pattern(_) => "PATTERN COMPONENT",
             Asm::Trace(_) => "MOTION TRACE",
         }
     }
 
     pub fn previews(&self) -> bool {
-        matches!(self, Asm::Joint(_) | Asm::Drive { .. } | Asm::RigidGroup | Asm::Coupling(_) | Asm::Cam(_))
+        matches!(self, Asm::Joint(_) | Asm::Pattern(_) | Asm::Drive { .. } | Asm::RigidGroup | Asm::Coupling(_) | Asm::Cam(_))
     }
 }
 
@@ -192,6 +212,10 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
         "joint.as_built" => {
             (Asm::Joint(Box::new(JointForm::new(true))), vec![SelInput::new("Components", BODIES, true), SelInput::new("Position", SNAPS, false)])
         }
+        "occurrence.pattern" => (
+            Asm::Pattern(Box::new(PatternForm::new())),
+            vec![SelInput::new("Component", BODIES, false), SelInput::new("Direction or axis", crate::dialogs_specify::accept(app), false)],
+        ),
         "joint.origin" => (Asm::JointOrigin { name: String::new(), hover: None }, vec![SelInput::new("Snap", SNAPS, false)]),
         "joint.rigid_group" => (Asm::RigidGroup, vec![SelInput::new("Components", BODIES, true)]),
         "joint.drive" => {
@@ -722,6 +746,22 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
             enter |= field(ui, offset);
             ui.end_row();
         }
+        Asm::Pattern(f) => {
+            row_label(ui, "Layout");
+            combo(ui, "pc_layout", &["Linear", "Circular"], &mut f.layout);
+            ui.end_row();
+            row_label(ui, "Quantity");
+            enter |= field(ui, &mut f.count);
+            ui.end_row();
+            if f.layout == 0 {
+                row_label(ui, "Spacing");
+                enter |= field(ui, &mut f.spacing);
+            } else {
+                row_label(ui, "Total angle");
+                enter |= field(ui, &mut f.angle);
+            }
+            ui.end_row();
+        }
         Asm::Coupling(f) => enter |= crate::dialogs_coupling::rows(app, ui, f, inputs),
         Asm::Cam(f) => enter |= crate::dialogs_coupling::cam::rows(app, ui, f, inputs),
         Asm::Interference { result, overlaps, of, clearance } => {
@@ -1010,6 +1050,28 @@ pub fn commands(app: &SolveApp, k: &Asm, inputs: &[SelInput]) -> Result<Vec<(Str
             // ratio in Joint 2's units per Joint 1's.
             let ratio = eval(ratio, ValueKind::Unitless)?;
             cmd("joint.motion_link", json!({"a": ja.id, "b": jb.id, "ia": ia, "ib": ib, "ratio": ratio, "offset": offset.trim()}))
+        }
+        Asm::Pattern(f) => {
+            let occ = occurrences(s, sel_items(inputs, 0)).first().copied().ok_or("select the component to pattern")?;
+            if s.doc.occurrences.iter().find(|o| o.id == occ).is_some_and(|o| o.parent != 0) {
+                return Err("a pattern works on a component placed directly in the design".into());
+            }
+            let pick = sel_items(inputs, 1).first().ok_or("select a direction (a linear pattern) or an axis (a circular one)")?;
+            let count = eval(&f.count, ValueKind::Unitless)?;
+            let mut p = json!({"occurrence": occ, "count": count.round() as i64});
+            if f.layout == 0 {
+                let (_, dir) =
+                    crate::dialogs_specify::vector_of(app, pick).ok_or("the direction must be an axis, a straight edge or a planar face")?;
+                p["direction"] = json!([dir.x, dir.y, dir.z]);
+                p["spacing"] = json!(f.spacing);
+            } else {
+                let (origin, dir) = crate::dialogs::axis_of(app, pick).ok_or("the axis must be an origin axis, a straight edge or a sketch line")?;
+                p["layout"] = json!("circular");
+                p["axis"] = json!([dir.x, dir.y, dir.z]);
+                p["origin"] = json!([origin.x, origin.y, origin.z]);
+                p["angle"] = json!(f.angle);
+            }
+            cmd("occurrence.pattern", p)
         }
         Asm::Coupling(f) => return crate::dialogs_coupling::commands(app, f, inputs),
         Asm::Cam(f) => return crate::dialogs_coupling::cam::commands(app, f, inputs),

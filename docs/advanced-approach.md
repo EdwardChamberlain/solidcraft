@@ -104,6 +104,16 @@ is built and what is not yet.
   on a face depends on the feature that made the face. The Part Navigator's parent and child
   colours show it.
 
+## Assembly Navigator actions
+
+A component's right-click menu has **Pattern Component…** (the Pattern Component dialog: the
+component, a direction or an axis, quantity and spacing or total angle; `occurrence.pattern` adds
+instances of the same component, linear or round an axis) and **Replace With** (`component.replace`:
+another component takes its place, keeping position, fixed state and joints; a joint on a face the
+new component lacks reports it lost it). A pattern works on components placed directly in the
+design. **Mirror Assembly** is not built: a mirrored instance is an improper transform, so a mirror
+needs an opposite-handed copy of the part.
+
 ## Replacing a sketch or a datum
 
 A feature's menu in the Part Navigator has **Replace With** for a sketch or a datum: pick another of

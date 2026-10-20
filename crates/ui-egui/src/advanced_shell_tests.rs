@@ -455,3 +455,37 @@ fn the_point_drop_down_lists_between_two_points_and_starts_it() {
     let crate::dialogs::Kind::Datum { method, .. } = &d.kind else { panic!("{:?}", d.kind) };
     assert_eq!(crate::dialogs_datum::METHODS.get(*method).map(|m| m.cmd), Some("construct.point.between"));
 }
+
+#[test]
+fn a_components_menu_patterns_it_and_replaces_it_with_another() {
+    use crate::shell::advanced::{Pane, set_pane};
+    let mut h = advanced();
+    for (name, x) in [("Peg", 0), ("Post", 40)] {
+        h.app.run("component.activate", json!({"component": "root"})).unwrap();
+        h.app.run("component.create", json!({"name": name})).unwrap();
+        h.app.run("solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [x, 0, 0]})).unwrap();
+    }
+    h.app.run("component.activate", json!({"component": "root"})).unwrap();
+    set_pane(&h.ctx, Pane::Assembly);
+    h.frames(4);
+    let right_click = |h: &mut Harness, row: &str| {
+        let r = rect_of(&format!("assembly_nav:row:{row}")).unwrap();
+        h.step(&json!({"click": [r.center().x, r.center().y], "button": "right"})).unwrap();
+        h.frames(3);
+    };
+    right_click(&mut h, "Peg");
+    h.step(&json!({"widget": "Pattern Component…"})).unwrap();
+    h.frames(4);
+    let d = h.app.dialog.as_ref().expect("the Pattern Component dialog");
+    assert!(matches!(&d.kind, crate::dialogs::Kind::Assembly(crate::dialogs_assembly::Asm::Pattern(_))));
+    assert!(!d.inputs[0].items.is_empty(), "the component is already picked");
+    crate::dialogs::cancel(&mut h.app);
+    h.frames(3);
+    right_click(&mut h, "Peg");
+    h.step(&json!({"click": {"handle": "assembly_nav:replace:Peg"}})).unwrap();
+    h.frames(3);
+    h.step(&json!({"click": {"handle": "assembly_nav:replace:Post"}})).unwrap();
+    h.frames(4);
+    let post = h.app.session.doc.find_component("Post").unwrap();
+    assert!(h.app.session.doc.occurrences.iter().all(|o| o.component == post), "the Peg's place now holds a Post");
+}

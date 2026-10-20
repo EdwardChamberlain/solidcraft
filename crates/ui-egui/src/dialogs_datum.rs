@@ -442,6 +442,18 @@ pub fn frame(app: &SolveApp) -> Dialog {
     d
 }
 
+/// The Fixed coordinate system's dialog filled from a stored frame: its numbers as typed
+/// coordinates and components.
+fn frame_of(app: &SolveApp, origin: solidcraft_engine::geom::Vec3, x: solidcraft_engine::geom::Vec3, y: solidcraft_engine::geom::Vec3) -> Dialog {
+    use crate::specifier::{Specifier, add};
+    let method = METHODS.iter().position(|m| m.cmd == "construct.csys.frame").unwrap_or(0);
+    let mut d = Dialog::new(Kind::Datum { method, value: String::new() }, Vec::new());
+    add(app, &mut d, Specifier::at_coordinates(origin));
+    add(app, &mut d, Specifier::at_components(x));
+    add(app, &mut d, Specifier::at_components(y));
+    d
+}
+
 fn frame_command(app: &SolveApp, d: &Dialog) -> Result<(&'static str, Value), String> {
     use crate::specifier;
     let origin = specifier::point(app, d, 0)?.ok_or("specify the origin")?;
@@ -504,7 +516,7 @@ pub fn refill(app: &SolveApp, kind: &FeatureKind) -> Option<Dialog> {
         FeatureKind::ConstructionCsys { def } => match def {
             solidcraft_engine::doc::construct::CsysDef::ThreePoints { origin, x, y } => ("construct.csys.three_points", vec![origin, x, y], None),
             solidcraft_engine::doc::construct::CsysDef::OnPlane { plane, .. } => ("construct.csys.on_plane", vec![plane], None),
-            solidcraft_engine::doc::construct::CsysDef::Frame { .. } => return None,
+            solidcraft_engine::doc::construct::CsysDef::Frame { origin, x_dir, y_dir } => return Some(frame_of(app, *origin, *x_dir, *y_dir)),
         },
         FeatureKind::ConstructionPlane { plane } => match plane {
             PlaneRef::TwoEdges { a, b } => ("construct.plane.two_edges", vec![a, b], None),

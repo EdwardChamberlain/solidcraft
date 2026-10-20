@@ -117,31 +117,6 @@ pub fn convert_pattern(app: &SolveApp, d: &mut Dialog) {
     }
 }
 
-/// A pattern of features keeps its own layout, with plain direction and axis inputs: the
-/// selector rows go, what was picked stays.
-pub fn plain_pattern(app: &SolveApp, d: &mut Dialog) {
-    use crate::selection::{AXES, SelInput};
-    if d.specs.is_empty() {
-        return;
-    }
-    let kept: Vec<Vec<solidcraft_engine::Sel>> =
-        (1..=d.specs.len()).map(|owner| d.inputs.iter().find(|i| i.owner == owner).map(|i| i.items.clone()).unwrap_or_default()).collect();
-    let vector = crate::dialogs_specify::accept(app);
-    let plain = match d.kind {
-        Kind::PatternRect { .. } => vec![SelInput::new("Direction", vector, false), SelInput::new("Direction 2", vector, false)],
-        Kind::PatternCirc { .. } => vec![SelInput::new("Axis", AXES, false)],
-        _ => return,
-    };
-    d.inputs.truncate(1);
-    d.specs.clear();
-    d.inputs.extend(plain);
-    for (k, items) in kept.into_iter().enumerate() {
-        if let Some(input) = d.inputs.get_mut(k + 1) {
-            input.items = items.into_iter().filter(|s| dialogs::fits(input.accept, s)).collect();
-        }
-    }
-}
-
 /// Does the dialog take these rows (Advanced, with its plane, direction or axis a selector)?
 pub fn applies(app: &SolveApp, d: &Dialog) -> bool {
     app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced

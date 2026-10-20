@@ -106,6 +106,7 @@ pub fn choices(class: Class) -> Vec<(&'static str, &'static str)> {
             ("normal", "Face or Plane Normal"),
             ("points", "Two Points"),
             ("axis", "Coordinate Axis"),
+            ("components", "Components"),
         ],
         Class::Point => vec![
             ("inferred", "Inferred"),
@@ -150,6 +151,20 @@ impl Specifier {
     /// A specifier starting at the way with this id (Inferred when there is none).
     pub fn with_id(class: Class, id: &str) -> Specifier {
         Specifier::new(class, choices(class).iter().position(|c| c.0 == id).unwrap_or(0))
+    }
+
+    /// A Point specifier at typed coordinates (millimetres): how a stored fixed point is shown.
+    pub fn at_coordinates(p: Vec3) -> Specifier {
+        let mut s = Specifier::with_id(Class::Point, "coords");
+        s.values = [p.x, p.y, p.z].iter().map(|v| format!("{} mm", fmt_number(*v))).collect();
+        s
+    }
+
+    /// A Vector specifier at typed components: how a stored fixed direction is shown.
+    pub fn at_components(v: Vec3) -> Specifier {
+        let mut s = Specifier::with_id(Class::Vector, "components");
+        s.values = [v.x, v.y, v.z].iter().map(|c| fmt_number(*c)).collect();
+        s
     }
 
     /// The same specifier with its default being no pick at all.
@@ -243,6 +258,25 @@ pub fn convert_input(app: &SolveApp, d: &mut Dialog, at: usize, mut spec: Specif
         d.inputs.insert((at + n).min(d.inputs.len()), input);
     }
     d.specs.push(spec);
+}
+
+/// Replace specifier `at` of the dialog by another, in the same place: its inputs go, the new
+/// one's take their position (what was picked is not kept).
+pub fn replace_spec(app: &SolveApp, d: &mut Dialog, at: usize, mut spec: Specifier) {
+    let owner = at + 1;
+    let first = d.inputs.iter().position(|i| i.owner == owner).unwrap_or(d.inputs.len());
+    d.inputs.retain(|i| i.owner != owner);
+    let mut inputs = spec.inputs(app);
+    for input in &mut inputs {
+        input.owner = owner;
+    }
+    spec.count = inputs.len();
+    for (n, input) in inputs.into_iter().enumerate() {
+        d.inputs.insert((first + n).min(d.inputs.len()), input);
+    }
+    if let Some(slot) = d.specs.get_mut(at) {
+        *slot = spec;
+    }
 }
 
 /// The plane a Plane specifier stands for as a command's `plane` parameter takes it (a name, or an
@@ -408,6 +442,7 @@ fn way_text(spec: &Specifier) -> String {
     match (spec.class, spec.id()) {
         (Class::Vector, "axis") => format!("{} axis", spec.values.first().map_or("X", String::as_str)),
         (Class::Point, "coords") => spec.values.join(", "),
+        (Class::Vector, "components") => spec.values.join(", "),
         (Class::Point, "origin") => "Workpiece origin".to_string(),
         _ => label.to_string(),
     }
@@ -542,6 +577,18 @@ pub fn sub_rows(app: &SolveApp, d: &mut Dialog, ui: &mut Ui) -> bool {
             spec.values = vec![["X", "Y", "Z"][axis.min(2)].to_string()];
             ui.end_row();
         }
+        (Class::Vector, "components") => {
+            if spec.values.len() != 3 {
+                spec.values = vec!["1".into(), "0".into(), "0".into()];
+            }
+            for (k, label) in ["X", "Y", "Z"].iter().enumerate() {
+                dialogs::row_label(ui, label);
+                if let Some(v) = spec.values.get_mut(k) {
+                    enter |= dialogs::field(ui, v);
+                }
+                ui.end_row();
+            }
+        }
         (Class::Point, "coords") => {
             for (k, label) in ["X", "Y", "Z"].iter().enumerate() {
                 dialogs::row_label(ui, label);
@@ -654,6 +701,14 @@ pub fn vector_raw(app: &SolveApp, d: &Dialog, index: usize) -> Result<Option<Vec
                 Some("Z") => Some(z),
                 _ => Some(x),
             }
+        }
+        "components" => {
+            let value = |k: usize| -> Result<f64, String> {
+                let text = spec.values.get(k).ok_or("missing component")?;
+                app.session.doc.eval(text, solidcraft_engine::doc::expr::Kind::Unitless).map_err(|e| e.to_string())
+            };
+            let v = Vec3::new(value(0)?, value(1)?, value(2)?);
+            Some(v.normalized().ok_or("the direction has no length")?)
         }
         "points" => {
             let inputs = inputs_of(d, index);
@@ -802,4 +857,11 @@ pub fn line(app: &SolveApp, d: &Dialog, index: usize) -> Result<Option<(Vec3, Ve
         },
     };
     Ok(found.map(|(p, v)| (p, if spec.reverse { -v } else { v })))
+}
+
+/// A number as typed: no trailing zeros ("1", "0.5", "-12.25").
+fn fmt_number(v: f64) -> String {
+    let s = format!("{v:.6}");
+    let s = s.trim_end_matches('0').trim_end_matches('.');
+    if s.is_empty() || s == "-0" { "0".into() } else { s.into() }
 }

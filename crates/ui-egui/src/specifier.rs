@@ -73,7 +73,8 @@ pub struct Specifier {
     pub optional: bool,
     /// What it stands for while nothing is picked.
     pub fallback: Fallback,
-    /// The panel of its Type and the rest of its inputs is open (the icon beside the selector).
+    /// The icon beside the selector was clicked: the dialog of its Type is to open (the dialog
+    /// that shows the specifier takes this and opens it).
     pub open: bool,
     /// What the dialog last mirrored of this specifier (a dialog that keeps its own copy of
     /// Reverse tells its own changes from the specifier's with it).
@@ -284,15 +285,16 @@ pub fn choose(app: &SolveApp, d: &mut Dialog, index: usize, id: &str) -> bool {
     }
 }
 
-/// The specifier as a selector row: click it, then click geometry or features and what is picked is
-/// inferred; the icon beside it opens the way to say it exactly (the Type, and the rest of that
-/// way's picks and values). `true` when Enter was pressed in a value.
+/// The specifier as a selector row: click it, then click geometry or features and what is picked
+/// is inferred. The icon at its right opens the specifier's own dialog, where the way to say it
+/// exactly is chosen (see [`open_sub`]); once a way other than Inferred is chosen, the row says
+/// which and the dialog is what the row opens. `true` when Enter was pressed in a value.
 pub fn show(app: &SolveApp, d: &mut Dialog, ui: &mut Ui, index: usize, title: &str, group: &str) -> bool {
-    let mut enter = false;
-    let Some(spec) = d.specs.get(index).cloned() else { return enter };
+    let Some(spec) = d.specs.get(index).cloned() else { return false };
     let owned = indices(d, index);
     let t = crate::theme::Tokens::get();
-    let mut toggle = false;
+    let open = std::cell::Cell::new(false);
+    let mut reset = false;
     let mut reverse = spec.reverse;
     let icon = match spec.class {
         Class::Plane => "plane",
@@ -308,66 +310,185 @@ pub fn show(app: &SolveApp, d: &mut Dialog, ui: &mut Ui, index: usize, title: &s
                 reverse = !reverse;
             }
         }
-        let r = ui.add(egui::Button::new("").selected(spec.open).min_size(egui::vec2(26.0, 22.0)));
+        let r = ui.add(egui::Button::new("").min_size(egui::vec2(26.0, 22.0)));
         crate::icons::paint(ui.painter(), r.rect.shrink(3.0), icon, t.icon, t.icon_fill, t.accent);
         crate::scenario::publish_handle(&format!("dialog:specify:{group}"), r.rect.center());
         if r.on_hover_text(dialogs::tr(title)).clicked() {
-            toggle = true;
+            open.set(true);
         }
     };
-    if let Some(&first) = owned.first() {
-        dialogs::input_rows_range_with(d, ui, &app.session, first..first + 1, Some(title), &mut trailing);
-    } else {
-        // A way that needs no pick: what it stands for, where the pick would be.
-        dialogs::row_label(ui, title);
-        ui.horizontal(|ui| {
-            let text = match (spec.class, spec.id()) {
-                (Class::Vector, "axis") => format!("{} axis", spec.values.first().map_or("X", String::as_str)),
-                (Class::Point, "coords") => spec.values.join(", "),
-                (Class::Point, "origin") => "Workpiece origin".to_string(),
-                _ => String::new(),
-            };
-            ui.add_enabled(false, egui::Button::new(text).min_size(egui::vec2(0.0, 22.0)));
-            trailing(ui);
-        });
-        ui.end_row();
+    match owned.first() {
+        // Inferred: the selector itself.
+        Some(&first) if spec.ty == 0 => dialogs::input_rows_range_with(d, ui, &app.session, first..first + 1, Some(title), &mut trailing),
+        // A way that was chosen in the dialog (or needs no pick): what it is, where the pick would be.
+        _ => {
+            dialogs::row_label(ui, title);
+            ui.horizontal(|ui| {
+                let text = way_text(&spec);
+                let chip = ui.add(egui::Button::new(text).fill(t.chip).min_size(egui::vec2(0.0, 22.0)));
+                if chip.on_hover_text(dialogs::tr("Edit")).clicked() {
+                    open.set(true);
+                }
+                if spec.ty != 0 {
+                    let clear = ui.small_button("×").on_hover_text(dialogs::tr("Clear the selection"));
+                    crate::scenario::publish_handle(&format!("dialog:clear:{group}"), clear.rect.center());
+                    if clear.clicked() {
+                        // Back to the selector: Inferred, nothing picked.
+                        reset = true;
+                    }
+                }
+                trailing(ui);
+            });
+            ui.end_row();
+        }
     }
     if let Some(slot) = d.specs.get_mut(index) {
         slot.reverse = reverse;
-        if toggle {
-            slot.open = !slot.open;
-        }
+        slot.open |= open.get();
     }
     if let Some(p) = crate::scenario::handle_at(&format!("dialog:specify:{group}")) {
         crate::scenario::publish_handle(&format!("dialog:group:{group}"), p);
     }
-    // Its panel: the Type, then what that Type asks for beyond the selector. Open while a Type
-    // other than Inferred is chosen, so what it needs is in view.
-    let spec = match d.specs.get(index).cloned() {
-        Some(spec) => spec,
-        None => return enter,
-    };
-    if !(spec.open || spec.ty != 0) {
-        return enter;
-    }
-    if spec.open {
-        let all = choices(spec.class);
-        let labels: Vec<&str> = all.iter().map(|c| c.1).collect();
-        let mut ty = spec.ty;
-        dialogs::row_label(ui, "Type");
-        dialogs::combo(ui, &format!("specifier_{group}"), &labels, &mut ty);
-        ui.end_row();
-        if ty != spec.ty {
-            set_type(app, d, index, ty);
+    if reset {
+        if let Some(slot) = d.specs.get_mut(index) {
+            slot.reverse = false;
+            slot.values = Specifier::new(slot.class, 0).values;
+        }
+        set_type(app, d, index, 0);
+        // Inferred starts empty, whatever the way that was cleared had picked.
+        for k in indices(d, index) {
+            if let Some(input) = d.inputs.get_mut(k) {
+                input.items.clear();
+            }
         }
     }
-    let owned = indices(d, index);
-    for k in owned.iter().skip(1) {
-        dialogs::input_rows_range(d, ui, &app.session, *k..*k + 1);
-    }
-    let Some(mut spec) = d.specs.get(index).cloned() else { return enter };
+    false
+}
+
+/// What a way that is not Inferred says in its selector row.
+fn way_text(spec: &Specifier) -> String {
+    let label = choices(spec.class).get(spec.ty).map_or("", |c| c.1);
     match (spec.class, spec.id()) {
-        (Class::Plane, "inferred" | "plane") => {}
+        (Class::Vector, "axis") => format!("{} axis", spec.values.first().map_or("X", String::as_str)),
+        (Class::Point, "coords") => spec.values.join(", "),
+        (Class::Point, "origin") => "Workpiece origin".to_string(),
+        _ => label.to_string(),
+    }
+}
+
+/// The ways the specifier's own dialog offers: all but Inferred, which is the selector's.
+fn dialog_choices(class: Class) -> Vec<(&'static str, &'static str)> {
+    choices(class).into_iter().skip(1).collect()
+}
+
+/// Open the dialog of specifier `index` of `parent`: its own dialog, with the ways to say a plane
+/// (an axis, a point) exactly. The parent waits under it; OK returns what was chosen to the
+/// parent's selector, Cancel leaves the parent as it was.
+pub fn open_sub(app: &mut SolveApp, parent: Dialog, index: usize) {
+    let Some(spec) = parent.specs.get(index).cloned() else {
+        app.dialog = Some(parent);
+        return;
+    };
+    // Inferred is the selector's: the dialog starts at the first way that is not.
+    let ty = if spec.ty == 0 { 1 } else { spec.ty };
+    let mut chosen = Specifier::new(spec.class, ty);
+    chosen.reverse = spec.reverse;
+    if spec.ty != 0 {
+        chosen.values = spec.values.clone();
+    }
+    let mut sub = Dialog::new(Kind::Specify { index }, Vec::new());
+    add(app, &mut sub, chosen);
+    // What the parent holds comes along as far as the way can use it.
+    let old: Vec<Sel> = indices(&parent, index).iter().filter_map(|k| parent.inputs.get(*k)).flat_map(|i| i.items.iter().cloned()).collect();
+    let mut keep = old.into_iter();
+    for input in sub.inputs.iter_mut() {
+        if let Some(pick) = keep.next().filter(|s| dialogs::fits(input.accept, s)) {
+            input.items = vec![pick];
+        }
+    }
+    if spec.ty != 0
+        && let Some(inner) = spec.inner
+        && let Some(slot) = sub.specs.first_mut()
+    {
+        slot.inner = Some(inner);
+    }
+    sub.active = sub.inputs.iter().position(|i| i.items.is_empty()).unwrap_or(0);
+    app.dialog_stack.push(parent);
+    app.dialog = Some(sub);
+}
+
+/// The specifier dialog was closed: with OK its choice goes to the parent's selector.
+pub fn close_sub(app: &mut SolveApp, sub: Dialog, applied: bool) {
+    let Some(mut parent) = app.dialog_stack.pop() else { return };
+    if let (true, Kind::Specify { index }) = (applied, &sub.kind)
+        && let Some(chosen) = sub.specs.first().cloned()
+        && parent.specs.get(*index).is_some()
+    {
+        let index = *index;
+        let mut inputs: Vec<SelInput> = sub.inputs.clone();
+        for input in &mut inputs {
+            input.owner = index + 1;
+        }
+        let owned = indices(&parent, index);
+        let at = owned.first().copied().unwrap_or(parent.inputs.len());
+        for k in owned.iter().rev() {
+            parent.inputs.remove(*k);
+        }
+        let mut spec = chosen;
+        spec.count = inputs.len();
+        spec.open = false;
+        spec.optional = parent.specs[index].optional;
+        spec.fallback = parent.specs[index].fallback;
+        for (n, input) in inputs.into_iter().enumerate() {
+            parent.inputs.insert((at + n).min(parent.inputs.len()), input);
+        }
+        parent.specs[index] = spec;
+        // The next pick the parent wants, not one of the specifier's own.
+        parent.active = (0..parent.inputs.len())
+            .find(|k| parent.inputs.get(*k).is_some_and(|i| i.items.is_empty()) && !is_optional(&parent, *k))
+            .unwrap_or_else(|| parent.active.min(parent.inputs.len().saturating_sub(1)));
+    }
+    app.dialog = Some(parent);
+}
+
+/// The heading of a specifier's dialog.
+pub fn sub_title(d: &Dialog) -> &'static str {
+    match d.specs.first().map(|s| s.class) {
+        Some(Class::Plane) => "PLANE",
+        Some(Class::Vector) => "AXIS",
+        Some(Class::Point) => "POINT",
+        None => "SPECIFY",
+    }
+}
+
+/// Can the specifier dialog's choice be handed back: is what its way needs given?
+pub fn sub_valid(app: &SolveApp, d: &Dialog) -> bool {
+    let Some(spec) = d.specs.first() else { return false };
+    match spec.class {
+        Class::Plane => plane(app, d, 0).is_ok(),
+        Class::Vector => matches!(vector_raw(app, d, 0), Ok(Some(_))),
+        Class::Point => matches!(point(app, d, 0), Ok(Some(_))),
+    }
+}
+
+/// The rows of a specifier's own dialog: the Type, what it asks for, its values.
+pub fn sub_rows(app: &SolveApp, d: &mut Dialog, ui: &mut Ui) -> bool {
+    let mut enter = false;
+    let Some(spec) = d.specs.first().cloned() else { return enter };
+    let all = dialog_choices(spec.class);
+    let labels: Vec<&str> = all.iter().map(|c| c.1).collect();
+    let mut at = spec.ty.saturating_sub(1);
+    dialogs::row_label(ui, "Type");
+    dialogs::combo(ui, "specifier_sub_type", &labels, &mut at);
+    ui.end_row();
+    if at + 1 != spec.ty {
+        set_type(app, d, 0, at + 1);
+    }
+    for k in indices(d, 0) {
+        dialogs::input_rows_range(d, ui, &app.session, k..k + 1);
+    }
+    let Some(mut spec) = d.specs.first().cloned() else { return enter };
+    match (spec.class, spec.id()) {
         (Class::Plane, _) => {
             if let Some(inner) = spec.inner.as_mut()
                 && let Some((label, _, value)) = inner.primary()
@@ -380,7 +501,7 @@ pub fn show(app: &SolveApp, d: &mut Dialog, ui: &mut Ui, index: usize, title: &s
         (Class::Vector, "axis") => {
             dialogs::row_label(ui, "Axis");
             let mut axis = ["X", "Y", "Z"].iter().position(|a| spec.values.first().is_some_and(|v| v == a)).unwrap_or(0);
-            dialogs::combo(ui, &format!("specifier_axis_{group}"), &["X", "Y", "Z"], &mut axis);
+            dialogs::combo(ui, "specifier_sub_axis", &["X", "Y", "Z"], &mut axis);
             spec.values = vec![["X", "Y", "Z"][axis.min(2)].to_string()];
             ui.end_row();
         }
@@ -395,7 +516,13 @@ pub fn show(app: &SolveApp, d: &mut Dialog, ui: &mut Ui, index: usize, title: &s
         }
         _ => {}
     }
-    if let Some(slot) = d.specs.get_mut(index) {
+    if spec.class == Class::Vector {
+        dialogs::row_label(ui, "Reverse");
+        let r = ui.checkbox(&mut spec.reverse, "");
+        crate::scenario::publish_handle("dialog:reverse:sub", r.rect.center());
+        ui.end_row();
+    }
+    if let Some(slot) = d.specs.first_mut() {
         *slot = spec;
     }
     enter

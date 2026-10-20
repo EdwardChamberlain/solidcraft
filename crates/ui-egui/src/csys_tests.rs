@@ -153,3 +153,37 @@ fn the_fixed_coordinate_system_takes_its_origin_and_axes_from_selector_rows() {
     let list = solidcraft_engine::view::coordinate_systems(&h.app.session);
     assert_eq!(list.len(), 1, "one coordinate system made");
 }
+
+#[test]
+fn a_fixed_coordinate_system_reopens_with_its_numbers_and_editing_redefines_it() {
+    use solidcraft_engine::doc::FeatureKind;
+    use solidcraft_engine::doc::construct::CsysDef;
+    let mut h = advanced();
+    h.app.run("construct.csys.frame", json!({"origin": [5, 6, 7], "x_dir": [1, 0, 0], "y_dir": [0, 0, 1], "name": "Fixed"})).unwrap();
+    let id = h.app.session.doc.find_feature("Fixed").unwrap().id;
+    let mut d = crate::dialogs::for_feature(&h.app, id, None).expect("it reopens");
+    assert_eq!((d.specs.len(), d.editing.map(|e| e.0)), (3, Some(id)));
+    assert_eq!(d.specs[0].values, vec!["5 mm", "6 mm", "7 mm"]);
+    assert_eq!(d.specs[2].values, vec!["0", "0", "1"]);
+    // Unchanged, it applies as it was.
+    let (cmd, p) = crate::dialogs_datum::command(&h.app, &d).unwrap();
+    assert_eq!(cmd, "construct.csys.frame");
+    assert_eq!((p["origin"].clone(), p["y_dir"].clone()), (json!([5.0, 6.0, 7.0]), json!([0.0, 0.0, 1.0])));
+    // Another origin, applied through the edit.
+    d.specs[0].values = vec!["10 mm".into(), "0 mm".into(), "0 mm".into()];
+    let cmds = crate::dialogs::apply_commands(&h.app, &d).unwrap();
+    assert_eq!(cmds[0].0, "timeline.redefine");
+    h.app.run(&cmds[0].0, cmds[0].1.clone()).unwrap();
+    let Some(FeatureKind::ConstructionCsys { def: CsysDef::Frame { origin, .. } }) = h.app.session.doc.feature(id).map(|f| f.kind.clone()) else {
+        panic!("still a fixed coordinate system")
+    };
+    assert!((origin.x - 10.0).abs() < 1e-9 && origin.y.abs() < 1e-9, "{origin:?}");
+    // A dialog that is opened afresh and typed over the same way works too: components can be typed.
+    h.app.start("construct.csys.frame");
+    h.frames(3);
+    let mut d = h.app.dialog.take().unwrap();
+    d.specs[1] = crate::specifier::Specifier::at_components(solidcraft_engine::geom::Vec3::new(0.0, 1.0, 0.0));
+    d.specs[2] = crate::specifier::Specifier::at_components(solidcraft_engine::geom::Vec3::new(-1.0, 0.0, 0.0));
+    let (_, p) = crate::dialogs_datum::command(&h.app, &d).unwrap();
+    assert_eq!((p["x_dir"].clone(), p["y_dir"].clone()), (json!([0.0, 1.0, 0.0]), json!([-1.0, 0.0, 0.0])));
+}

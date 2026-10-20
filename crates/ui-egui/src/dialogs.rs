@@ -1775,14 +1775,9 @@ fn object_type_row(app: &SolveApp, d: &mut Dialog, ui: &mut egui::Ui) {
         inp.label = objects_label(inp.accept);
         inp.items.clear();
         d.active = 0;
-        // Patterns of bodies have selector rows for their direction or axis; patterns of features
-        // keep their own layout.
+        // The direction or axis rows follow the pattern's objects, bodies or features alike.
         if matches!(d.kind, Kind::PatternRect { .. } | Kind::PatternCirc { .. }) {
-            if ty == 1 {
-                crate::dialogs_selectors::plain_pattern(app, d);
-            } else {
-                crate::dialogs_selectors::convert_pattern(app, d);
-            }
+            crate::dialogs_selectors::convert_pattern(app, d);
         }
     }
 }
@@ -2015,7 +2010,13 @@ fn rectangular_pattern_rows(app: &SolveApp, d: &mut Dialog, ui: &mut egui::Ui, s
             for (index, ui) in columns.iter_mut().enumerate() {
                 ui.strong(tr(if index == 0 { "Direction 1" } else { "Direction 2" }));
                 egui::Grid::new(("pattern_direction", index)).spacing(vec2(8.0, 8.0)).show(ui, |ui| {
-                    input_rows_range(d, ui, session, index + 1..index + 2);
+                    if d.specs.is_empty() {
+                        input_rows_range(d, ui, session, index + 1..index + 2);
+                    } else {
+                        let (title, group) =
+                            if index == 0 { ("Direction", "pattern_direction_selector") } else { ("Direction 2", "pattern_direction2_selector") };
+                        enter |= crate::specifier::show(app, d, ui, index, title, group);
+                    }
                     if let Kind::PatternRect { count, spacing, count2, spacing2 } = &mut d.kind {
                         let (count, spacing, count_label, spacing_label) =
                             if index == 0 { (count, spacing, "Quantity", "Spacing") } else { (count2, spacing2, "Quantity 2", "Spacing 2") };
@@ -4112,11 +4113,9 @@ pub(crate) fn report_title(d: &Dialog) -> String {
 }
 
 /// A feature whose plane the dialog makes: the commands that make the plane, then the feature. An
-/// edit rebuilds one feature in place, so it cannot also make a plane.
-fn with_made_plane(d: &Dialog, mut prefix: Vec<(String, Value)>, cmd: &str, params: Value) -> Result<Vec<(String, Value)>, String> {
-    if d.editing.is_some() {
-        return Err("a plane made here cannot edit a feature: make the plane first, then pick it".into());
-    }
+/// edit makes the plane first too, puts it before the feature and redefines the feature to use it
+/// (`apply_commands`).
+fn with_made_plane(_d: &Dialog, mut prefix: Vec<(String, Value)>, cmd: &str, params: Value) -> Result<Vec<(String, Value)>, String> {
     prefix.push((cmd.to_string(), params));
     Ok(prefix)
 }
@@ -4125,7 +4124,27 @@ fn with_made_plane(d: &Dialog, mut prefix: Vec<(String, Value)>, cmd: &str, para
 pub fn apply_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, String> {
     let cmds = dialog_commands(app, d)?;
     if let Some((id, _)) = d.editing {
-        let (cmd, mut params) = cmds.into_iter().next().ok_or("nothing to apply")?;
+        // A plane made in the dialog is made first (the leading `construct.*` commands), and put
+        // before the feature, which then uses it.
+        let datum = app.session.doc.feature(id).is_some_and(|f| {
+            matches!(
+                f.kind,
+                FeatureKind::ConstructionPlane { .. }
+                    | FeatureKind::ConstructionAxis { .. }
+                    | FeatureKind::ConstructionPoint { .. }
+                    | FeatureKind::ConstructionCsys { .. }
+            )
+        });
+        // (A datum's own command is the one that redefines it, not a plane made for it.)
+        let made = if datum { 0 } else { cmds.iter().take_while(|(c, _)| c.starts_with("construct.")).count() };
+        let mut prefix: Vec<(String, Value)> = Vec::new();
+        let at = app.session.doc.feature_index(id).unwrap_or(0);
+        for (k, (c, p)) in cmds.iter().take(made).enumerate() {
+            prefix.push((c.clone(), p.clone()));
+            let name = p.get("name").cloned().ok_or("the plane made here has no name")?;
+            prefix.push(("timeline.reorder".into(), json!({"feature": name, "position": at + k})));
+        }
+        let (cmd, mut params) = cmds.into_iter().nth(made).ok_or("nothing to apply")?;
         if let Some(feature) = app.session.doc.feature(id) {
             let original_all = match &feature.kind {
                 FeatureKind::Extrude { sketch, profiles: ProfileSel::All, thin: None, .. }
@@ -4151,7 +4170,8 @@ pub fn apply_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>
                 }
             }
         }
-        return Ok(vec![("timeline.redefine".into(), json!({"feature": id, "command": cmd, "params": params}))]);
+        prefix.push(("timeline.redefine".into(), json!({"feature": id, "command": cmd, "params": params})));
+        return Ok(prefix);
     }
     Ok(cmds)
 }
@@ -5253,7 +5273,10 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
     let st = s.world_state();
     let start = |cmd: &str| Dialog::for_command(app, cmd);
     let mut d = match &f.kind {
-        FeatureKind::ConstructionAxis { .. } | FeatureKind::ConstructionPoint { .. } | FeatureKind::ConstructionPlane { .. }
+        FeatureKind::ConstructionAxis { .. }
+        | FeatureKind::ConstructionPoint { .. }
+        | FeatureKind::ConstructionPlane { .. }
+        | FeatureKind::ConstructionCsys { .. }
             if app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced
                 && let Some(d) = crate::dialogs_datum::refill(app, &f.kind) =>
         {
@@ -5663,7 +5686,13 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                                 }
                             }
                             None => {
-                                d.extra.insert(key.into(), pt3(dir.0));
+                                // A direction that is no origin axis shows as its typed components.
+                                let slot = if key == "dir1" { 0 } else { 1 };
+                                if d.specs.get(slot).is_some() {
+                                    crate::specifier::replace_spec(app, &mut d, slot, crate::specifier::Specifier::at_components(dir.0));
+                                } else {
+                                    d.extra.insert(key.into(), pt3(dir.0));
+                                }
                             }
                         }
                     }
@@ -5699,9 +5728,6 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 } else {
                     inp.items = bodies;
                 }
-            }
-            if as_features {
-                crate::dialogs_selectors::plain_pattern(app, &mut d);
             }
             d
         }

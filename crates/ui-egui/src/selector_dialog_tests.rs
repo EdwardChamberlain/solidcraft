@@ -68,7 +68,7 @@ fn a_picked_plane_mirrors_as_before_and_a_plane_made_in_the_dialog_is_made_first
 }
 
 #[test]
-fn an_existing_mirror_opens_with_its_plane_and_a_made_plane_cannot_edit_it() {
+fn an_existing_mirror_opens_with_its_plane_and_a_plane_made_in_the_edit_goes_before_it() {
     let mut h = part(ModellingApproach::Advanced);
     h.app.run("solid.mirror", json!({"bodies":["Block"],"plane":"YZ","combine":false})).unwrap();
     h.frames(2);
@@ -79,15 +79,32 @@ fn an_existing_mirror_opens_with_its_plane_and_a_made_plane_cannot_edit_it() {
     assert!(matches!(d.kind, Kind::Mirror) && !d.specs.is_empty());
     let cmds = apply_commands(&h.app, d).unwrap();
     assert_eq!(cmds[0].1["params"]["plane"], "YZ", "{:?}", cmds[0]);
+    // A plane made in the dialog: offset 15 mm from YZ.
     {
         let mut d = h.app.dialog.take().unwrap();
         crate::specifier::choose(&h.app, &mut d, 0, "construct.plane.offset");
         let at = d.inputs.iter().position(|i| i.owner == 1).unwrap();
         d.inputs[at].items = vec![plane("YZ")];
+        *d.specs[0].inputs_value_mut().unwrap() = "15 mm".into();
         h.app.dialog = Some(d);
     }
-    let err = apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap_err();
-    assert!(err.contains("make the plane first"), "{err}");
+    let d = h.app.dialog.take().unwrap();
+    let cmds = apply_commands(&h.app, &d).unwrap();
+    assert_eq!(cmds.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(), ["construct.plane.offset", "timeline.reorder", "timeline.redefine"]);
+    crate::dialogs::run_dialog(&mut h.app, &d).unwrap();
+    h.frames(4);
+    let doc = &h.app.session.doc;
+    let plane_at =
+        doc.features.iter().position(|f| matches!(f.kind, solidcraft_engine::doc::FeatureKind::ConstructionPlane { .. })).expect("the plane");
+    let mirror_at = doc.feature_index(id).unwrap();
+    assert!(plane_at < mirror_at, "the plane is before the mirror that uses it");
+    let name = doc.features[plane_at].name.clone();
+    let uses = match &doc.feature(id).unwrap().kind {
+        solidcraft_engine::doc::FeatureKind::Mirror { plane, .. } => format!("{plane:?}"),
+        _ => String::new(),
+    };
+    assert!(uses.contains(&name), "the mirror now uses {name}: {uses}");
+    assert!(h.app.session.model.result(id).is_some_and(|r| r.error.is_none()), "it still evaluates");
 }
 
 #[test]
@@ -164,18 +181,18 @@ fn a_linear_patterns_directions_are_selector_rows_and_a_features_pattern_keeps_p
     }
     let c = apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap();
     assert_eq!((c[0].1["dir1"].clone(), c[0].1["dir2"].clone()), (json!([0.0, -1.0, 0.0]), json!([0.0, 0.0, 1.0])));
-    // Features: plain inputs again, and back to bodies the selector rows.
+    // The object type switches between bodies and features: the rows stay, and so do the picks.
     {
         let mut d = h.app.dialog.take().unwrap();
         d.inputs[0].accept = crate::selection::FEATURES;
-        crate::dialogs_selectors::plain_pattern(&h.app, &mut d);
-        assert!(d.specs.is_empty() && d.inputs.len() == 3, "{:?}", d.inputs.len());
-        assert_eq!(d.inputs[1].items, vec![axis("Y")], "the pick stays");
-        d.inputs[0].accept = crate::selection::BODIES;
+        d.inputs[0].items.clear();
         crate::dialogs_selectors::convert_pattern(&h.app, &mut d);
-        assert_eq!(d.specs.len(), 2);
-        assert_eq!(d.inputs[1].items, vec![axis("Y")], "and again");
+        assert_eq!((d.specs.len(), d.inputs.len()), (2, 3), "features have the direction rows too");
+        assert_eq!(d.inputs[1].items, vec![axis("Y")], "the pick stays");
+        h.app.dialog = Some(d);
     }
+    h.frames(4);
+    assert!(crate::scenario::handle_at("dialog:specify:pattern_direction_selector").is_some(), "the features' layout shows them");
     let mut c = part(ModellingApproach::Classic);
     c.app.start("solid.pattern");
     c.frames(4);
@@ -231,4 +248,21 @@ fn to_object_takes_a_sketch_point_as_the_place() {
     probe.items = vec![sel];
     let at = crate::dialogs::object_point(&h.app, &[probe], crate::dialogs::TO_OBJECT).expect("a place");
     assert_eq!(at, json!([3.0, 4.0, 0.0]));
+}
+
+#[test]
+fn an_existing_feature_pattern_reopens_with_its_directions_as_rows() {
+    let mut h = part(ModellingApproach::Advanced);
+    h.app.run("solid.hole", json!({"position": [5, 5, 10], "diameter": 2, "name": "Hole"})).unwrap();
+    h.app
+        .run("solid.pattern.rectangular", json!({"features": ["Hole"], "dir1": [0.6, 0.8, 0], "count1": 2, "spacing1": "3 mm", "name": "Holes"}))
+        .unwrap();
+    let id = h.app.session.doc.find_feature("Holes").unwrap().id;
+    let d = crate::dialogs::for_feature(&h.app, id, None).expect("it reopens");
+    assert_eq!(d.specs.len(), 2);
+    assert_eq!(d.specs[0].values, vec!["0.6", "0.8", "0"], "a direction that is no origin axis is typed components");
+    let c = apply_commands(&h.app, &d).unwrap();
+    assert_eq!(c[0].0, "timeline.redefine");
+    let p = &c[0].1["params"];
+    assert!((p["dir1"][0].as_f64().unwrap() - 0.6).abs() < 1e-9 && (p["dir1"][1].as_f64().unwrap() - 0.8).abs() < 1e-9, "{p}");
 }

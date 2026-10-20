@@ -44,6 +44,8 @@ pub enum Fallback {
     WorkpieceOrigin,
     /// The way the profile faces (an extrude's direction); no direction of its own.
     ProfileNormal,
+    /// The y axis (a coordinate system's second direction).
+    YAxis,
 }
 
 impl Fallback {
@@ -53,6 +55,7 @@ impl Fallback {
             Fallback::XAxis => Some("X axis"),
             Fallback::WorkpieceOrigin => Some("Workpiece origin"),
             Fallback::ProfileNormal => Some("Profile normal"),
+            Fallback::YAxis => Some("Y axis"),
         }
     }
 }
@@ -663,6 +666,7 @@ pub fn vector_raw(app: &SolveApp, d: &Dialog, index: usize) -> Result<Option<Vec
         "inferred" => match items.as_slice() {
             [] => match spec.fallback {
                 Fallback::XAxis => Some(work_axes(app).1),
+                Fallback::YAxis => Some(work_axes(app).2),
                 _ => None,
             },
             [one] => Some(direction_of(app, one).ok_or("that has no direction")?),

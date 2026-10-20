@@ -119,3 +119,37 @@ fn the_tree_menu_makes_and_releases_the_work_system_and_its_parts_can_be_picked(
     let picked = h.app.dialog.as_ref().and_then(|d| d.inputs.first()).map(|i| i.items.clone()).unwrap_or_default();
     assert_eq!(picked, vec![Sel::Plane { name: format!("{name}:XY") }], "the part row picked its plane into the dialog");
 }
+
+#[test]
+fn the_fixed_coordinate_system_takes_its_origin_and_axes_from_selector_rows() {
+    let mut h = advanced();
+    assert!(
+        crate::dialogs_datum::types(crate::dialogs_datum::Class::Csys).iter().any(|(c, _)| *c == "construct.csys.frame"),
+        "it is a Type of the datum"
+    );
+    h.app.start("construct.csys.frame");
+    h.frames(4);
+    let d = h.app.dialog.as_ref().expect("a dialog");
+    assert_eq!(d.specs.len(), 3, "origin, x axis, y axis");
+    for g in ["csys_origin", "csys_x", "csys_y"] {
+        assert!(crate::scenario::handle_at(&format!("dialog:group:{g}")).is_some(), "{g}");
+    }
+    // Nothing picked: the world's origin and axes.
+    let c = crate::dialogs::apply_commands(&h.app, d).unwrap();
+    assert_eq!(c[0].0, "construct.csys.frame");
+    assert_eq!(c[0].1["x_dir"], json!([1.0, 0.0, 0.0]));
+    assert_eq!(c[0].1["y_dir"], json!([0.0, 1.0, 0.0]));
+    // The Y axis along Z (the x axis picked as Y's own first): turned about X.
+    {
+        let d = h.app.dialog.as_mut().unwrap();
+        let at = d.inputs.iter().position(|i| i.owner == 3).unwrap();
+        d.inputs[at].items = vec![Sel::Axis { name: "Z".into() }];
+    }
+    let c = crate::dialogs::apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap();
+    assert_eq!(c[0].1["y_dir"], json!([0.0, 0.0, 1.0]));
+    h.frames(6);
+    h.step(&json!({"widget": "OK"})).unwrap();
+    h.frames(4);
+    let list = solidcraft_engine::view::coordinate_systems(&h.app.session);
+    assert_eq!(list.len(), 1, "one coordinate system made");
+}

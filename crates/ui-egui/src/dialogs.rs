@@ -604,6 +604,10 @@ impl Dialog {
                 Kind::AnglePlane { angle: "45 deg".into() },
                 vec![SelInput::new("Plane", PLANES, false), SelInput::new("Axis", AXES, false)],
             ),
+            // Advanced: the fixed coordinate system's origin and axes are selector rows.
+            "construct.csys.frame" if app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced => {
+                crate::dialogs_datum::frame(app)
+            }
             c if app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced && crate::dialogs_datum::dialog(c).is_some() => {
                 crate::dialogs_datum::dialog(c)?
             }
@@ -2588,6 +2592,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     enter |= sketch_specifier_rows(app, &mut d, ui);
                 } else if advanced && matches!(d.kind, Kind::Extrude { .. }) && !d.specs.is_empty() {
                     enter |= crate::dialogs_extrude::rows(app, &mut d, ui);
+                } else if advanced && matches!(d.kind, Kind::Datum { .. }) && !d.specs.is_empty() {
+                    enter |= crate::dialogs_datum::frame_rows(app, &mut d, ui);
                 } else if crate::dialogs_selectors::applies(app, &d) {
                     enter |= crate::dialogs_selectors::rows(app, &mut d, ui);
                     if value_rows {

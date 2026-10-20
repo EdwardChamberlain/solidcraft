@@ -49,6 +49,8 @@ pub static METHODS: &[Method] = &[
         value: None,
     },
     Method { class: Class::Csys, cmd: "construct.csys.on_plane", label: "On Plane or Face", inputs: &[("plane", "Plane", PLANE_REF)], value: None },
+    // Origin and axes by selector rows, kept as numbers (not following what they were picked from).
+    Method { class: Class::Csys, cmd: "construct.csys.frame", label: "Fixed (Origin and Axes)", inputs: &[], value: None },
     Method {
         class: Class::Axis,
         cmd: "construct.axis.through_cylinder",
@@ -196,6 +198,9 @@ fn command_of(kind: &Kind) -> Option<&'static str> {
 /// The shared dialog for one of [`METHODS`].
 pub fn dialog(cmd: &str) -> Option<Dialog> {
     let (method, m) = METHODS.iter().enumerate().find(|(_, m)| m.cmd == cmd)?;
+    if cmd == "construct.csys.frame" {
+        return None;
+    }
     let inputs = m.inputs.iter().map(|(_, label, accept)| SelInput::new(label, *accept, false)).collect();
     let value = m.value.map(|(_, _, default)| default.to_string()).unwrap_or_default();
     Some(Dialog::new(Kind::Datum { method, value }, inputs))
@@ -406,6 +411,9 @@ fn reference(app: &SolveApp, sel: &Sel) -> Result<Value, String> {
 pub fn command(app: &SolveApp, d: &Dialog) -> Result<(&'static str, Value), String> {
     let Kind::Datum { method, value } = &d.kind else { return Err("not a datum dialog".into()) };
     let m = METHODS.get(*method).ok_or("unknown datum type")?;
+    if m.cmd == "construct.csys.frame" {
+        return frame_command(app, d);
+    }
     let mut p = serde_json::Map::new();
     for ((param, label, _), input) in m.inputs.iter().zip(&d.inputs) {
         match (input.items.first(), d.extra.get(*param)) {
@@ -420,6 +428,43 @@ pub fn command(app: &SolveApp, d: &Dialog) -> Result<(&'static str, Value), Stri
         p.insert(param.into(), json!(value));
     }
     Ok((m.cmd, Value::Object(p)))
+}
+
+/// The Fixed coordinate system: its origin and its x and y directions from the three selector rows
+/// (the work coordinate system's origin and axes while nothing is picked).
+pub fn frame(app: &SolveApp) -> Dialog {
+    use crate::specifier::{Class as C, Fallback, Specifier, add};
+    let method = METHODS.iter().position(|m| m.cmd == "construct.csys.frame").unwrap_or(0);
+    let mut d = Dialog::new(Kind::Datum { method, value: String::new() }, Vec::new());
+    add(app, &mut d, Specifier::new(C::Point, 0).with_fallback(Fallback::WorkpieceOrigin));
+    add(app, &mut d, Specifier::new(C::Vector, 0).with_fallback(Fallback::XAxis));
+    add(app, &mut d, Specifier::new(C::Vector, 0).with_fallback(Fallback::YAxis));
+    d
+}
+
+fn frame_command(app: &SolveApp, d: &Dialog) -> Result<(&'static str, Value), String> {
+    use crate::specifier;
+    let origin = specifier::point(app, d, 0)?.ok_or("specify the origin")?;
+    let x = specifier::vector(app, d, 1)?.ok_or("specify the X axis")?;
+    let y = specifier::vector(app, d, 2)?.ok_or("specify the Y axis")?;
+    let pt = |v: solidcraft_engine::geom::Vec3| json!([v.x, v.y, v.z]);
+    Ok(("construct.csys.frame", json!({"origin": pt(origin), "x_dir": pt(x), "y_dir": pt(y)})))
+}
+
+/// The Fixed coordinate system's rows: origin and the two axes.
+pub fn frame_rows(app: &SolveApp, d: &mut Dialog, ui: &mut Ui) -> bool {
+    use crate::specifier::show;
+    let mut enter = false;
+    if crate::dialogs::section(ui, "csys_origin", "Origin", true) {
+        enter |= show(app, d, ui, 0, "Point", "csys_origin_selector");
+    }
+    if crate::dialogs::section(ui, "csys_x", "X Axis", true) {
+        enter |= show(app, d, ui, 1, "Axis", "csys_x_selector");
+    }
+    if crate::dialogs::section(ui, "csys_y", "Y Axis", true) {
+        enter |= show(app, d, ui, 2, "Axis", "csys_y_selector");
+    }
+    enter
 }
 
 /// A pick standing for a stored reference, when the model still has it.

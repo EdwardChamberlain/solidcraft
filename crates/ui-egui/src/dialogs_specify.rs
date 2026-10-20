@@ -30,7 +30,7 @@ pub fn vector_of(app: &SolveApp, sel: &Sel) -> Option<(Vec3, Vec3)> {
 }
 
 /// What a point input accepts in the Advanced approach.
-pub const POINT: Accept = FACES | VERTICES | EDGES;
+pub const POINT: Accept = FACES | VERTICES | EDGES | crate::selection::SKETCH_POINTS;
 
 /// Let the point inputs (To Object, From Object) take what Specify Point names, in the Advanced
 /// approach; Classic keeps faces and vertices.

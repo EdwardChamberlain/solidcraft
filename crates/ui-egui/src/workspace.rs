@@ -10,6 +10,7 @@ use solidcraft_engine::doc::FeatureKind;
 const ASSEMBLE: &[&str] = &[
     "component.create",
     "joint.create",
+    "mate.create",
     "joint.as_built",
     "component.insert_design",
     "joint.origin",
@@ -90,7 +91,7 @@ const ADVANCED_COMPONENT: &[&str] =
     &["component.new_part", "component.insert_design", "component.activate", "component.update_links", "component.break_link"];
 
 const ADVANCED_JOINT: &[&str] =
-    &["joint.origin", "joint.create", "joint.as_built", "joint.rigid_group", "joint.drive", "explode.create", "inspect.interference"];
+    &["joint.origin", "joint.create", "mate.create", "joint.as_built", "joint.rigid_group", "joint.drive", "explode.create", "inspect.interference"];
 
 const ADVANCED_INSPECT: &[&str] = &["inspect.measure", "inspect.section", "inspect.interference", "inspect.center_of_mass", "inspect.draft"];
 

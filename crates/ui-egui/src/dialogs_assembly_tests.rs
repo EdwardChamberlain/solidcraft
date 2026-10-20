@@ -619,3 +619,32 @@ fn motion_trace_keeps_the_picked_point_path() {
     };
     assert!(drawn.dist(shown) < 1e-6, "{drawn:?} wants {shown:?}");
 }
+
+/// Two face picks make a mate: the type picks the command's `type`, Distance carries its gap, and
+/// OK leaves B resting on A's top.
+#[test]
+fn mate_from_two_faces() {
+    let mut app = two_boxes();
+    app.start("mate.create");
+    let mut d = app.dialog.clone().unwrap();
+    let (fa, fb) = (face_sel(&app.session, Vec3::new(10.0, 10.0, 10.0)).unwrap(), face_sel(&app.session, Vec3::new(40.0, 10.0, 0.0)).unwrap());
+    assert!(apply_commands(&app, &d).is_err(), "no faces yet");
+    d.pick(&app.session, fa);
+    d.pick(&app.session, fb);
+    let c = apply_commands(&app, &d).unwrap();
+    assert_eq!((c[0].0.as_str(), c[0].1["type"].as_str()), ("mate.create", Some("touch")), "{c:?}");
+    assert!(c[0].1.get("offset").is_none());
+    if let Kind::Assembly(Asm::Joint(f)) = &mut d.kind {
+        f.mate = Some(3);
+        f.offset[2] = "4 mm".into();
+    }
+    let c = apply_commands(&app, &d).unwrap();
+    assert_eq!((c[0].1["type"].as_str(), c[0].1["offset"].as_str()), (Some("distance"), Some("4 mm")), "{c:?}");
+    for (name, p) in c {
+        app.run(&name, p).unwrap();
+    }
+    let b = occ(&app, "B");
+    let w = solidcraft_engine::doc::joints::occurrence_world(&app.session.doc, b);
+    let bottom = solidcraft_engine::doc::apply_point(&w, Vec3::new(40.0, 10.0, 0.0));
+    assert!((bottom.z - 14.0).abs() < 1e-6, "B's bottom face 4 mm above A's top: {bottom:?}");
+}

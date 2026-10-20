@@ -30,9 +30,13 @@ pub const TYPES: [&str; 7] = ["rigid", "revolute", "slider", "cylindrical", "pin
 const TYPE_LABELS: [&str; 7] = ["Rigid", "Revolute", "Slider", "Cylindrical", "Pin-slot", "Planar", "Ball"];
 /// What a joint origin input accepts (snaps on faces, edges and vertices).
 pub const SNAPS: u16 = FACES | EDGES | VERTICES;
+/// Mate types in the order the Type box lists them (`mate.create`'s `type`).
+const MATES: [&str; 4] = ["touch", "align", "concentric", "distance"];
+const MATE_LABELS: [&str; 4] = ["Touch", "Align", "Concentric", "Distance"];
 /// Commands whose effect is where occurrences sit (previewed on the placed model).
-const MOVES: [&str; 12] = [
+const MOVES: [&str; 13] = [
     "joint.create",
+    "mate.create",
     "joint.as_built",
     "joint.drive",
     "joint.edit",
@@ -92,6 +96,8 @@ pub type Hover = Option<(Sel, Option<SnapPt>)>;
 #[derive(Clone, Debug)]
 pub struct JointForm {
     pub as_built: bool,
+    /// A face mate: the index of its type in `MATES` (the joint machinery underneath).
+    pub mate: Option<usize>,
     /// Editing this joint (its origins stay; type, alignment and limits change).
     pub editing: Option<u64>,
     pub kind: usize,
@@ -111,6 +117,7 @@ impl JointForm {
     fn new(as_built: bool) -> JointForm {
         JointForm {
             as_built,
+            mate: None,
             editing: None,
             kind: 0,
             flip: false,
@@ -145,6 +152,7 @@ impl Asm {
             Asm::NewComponent { .. } => "NEW COMPONENT",
             Asm::Joint(j) if j.editing.is_some() => "EDIT JOINT",
             Asm::Joint(j) if j.as_built => "AS-BUILT JOINT",
+            Asm::Joint(j) if j.mate.is_some() => "MATE",
             Asm::Joint(_) => "JOINT",
             Asm::JointOrigin { .. } => "JOINT ORIGIN",
             Asm::RigidGroup => "RIGID GROUP",
@@ -175,6 +183,11 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
             Asm::Joint(Box::new(JointForm::new(false))),
             vec![SelInput::new("Component 1", SNAPS, false), SelInput::new("Component 2", SNAPS, false)],
         ),
+        "mate.create" => {
+            let mut f = JointForm::new(false);
+            f.mate = Some(0);
+            (Asm::Joint(Box::new(f)), vec![SelInput::new("Face 1", FACES, false), SelInput::new("Face 2", FACES, false)])
+        }
         "joint.as_built" => {
             (Asm::Joint(Box::new(JointForm::new(true))), vec![SelInput::new("Components", BODIES, true), SelInput::new("Position", SNAPS, false)])
         }
@@ -514,6 +527,17 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
                     }
                 });
                 ui.end_row();
+            }
+            if let Some(m) = f.mate.as_mut() {
+                row_label(ui, "Type");
+                combo(ui, "mate_type", &MATE_LABELS, m);
+                ui.end_row();
+                if MATES.get(*m) == Some(&"distance") {
+                    row_label(ui, "Distance");
+                    enter |= field(ui, &mut f.offset[2]);
+                    ui.end_row();
+                }
+                return enter;
             }
             row_label(ui, "Motion");
             ui.label("");
@@ -896,6 +920,18 @@ pub fn commands(app: &SolveApp, k: &Asm, inputs: &[SelInput]) -> Result<Vec<(Str
             } else {
                 cmd("component.from_bodies", json!({ "bodies": bodies }))
             }
+        }
+        Asm::Joint(f) if f.mate.is_some() => {
+            let ty = f.mate.and_then(|m| MATES.get(m)).copied().unwrap_or("touch");
+            let (a, b) = (snap(0, "the first face")?, snap(1, "the second face")?);
+            if a.param.get("occurrence").is_some() && a.param.get("occurrence") == b.param.get("occurrence") {
+                return Err("the two faces are on the same component".into());
+            }
+            let mut p = json!({"type": ty, "a": a.param, "b": b.param});
+            if ty == "distance" {
+                p["offset"] = json!(f.offset[2]);
+            }
+            cmd("mate.create", p)
         }
         Asm::Joint(f) => {
             let kind = TYPES.get(f.kind).copied().unwrap_or("rigid");

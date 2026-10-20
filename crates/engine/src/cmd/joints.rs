@@ -25,6 +25,12 @@ pub static COMMANDS: &[CommandSpec] = &[
          b's z against a's as two faces meet; true: b's z along a's, so two origins given at one point with the same z stay as they are); \
          offset?; angle?; name?; quiet?: bool (leave out dof and fixed)",
     ),
+    CommandSpec::new("mate.create", "Mate", mate).at("SOLID", "ASSEMBLE").icon("joint").params(
+        "type: touch|align|concentric|distance; a, b: a face of each of two occurrences ({occurrence, face: [x,y,z] in world | \"<face name>\"}; concentric: round faces, {circle: …}) or joint origins as joint.create; \
+         offset?: the gap between the faces (distance needs it; touch and align accept it, default 0); name?. touch: the faces meet, outsides together; align: the faces point the same way, \
+         flush; concentric: the round faces share an axis; distance: touch with a gap. The mate leaves the parts free to slide along the face (or turn about the axis): \
+         it is a planar or cylindrical joint, listed and driven as such",
+    ),
     CommandSpec::new("joint.as_built", "As-Built Joint", as_built).at("SOLID", "ASSEMBLE").icon("as_built").params(
         "type, a: occurrence, b: occurrence (stay where they are); at?: joint origin (default: b's origin) — the joint's frame; \
          name?; limits?: [[min, max] | null…]; quiet?: bool",
@@ -591,6 +597,32 @@ fn joint(s: &mut Session, p: &Value) -> Result<Value> {
         suppressed: false,
     };
     add_joint(s, j, p)
+}
+
+/// A mate is a joint between two faces: touch and distance meet the faces (a gap for distance),
+/// align turns one to face the same way as the other, concentric lines two round faces up.
+fn mate(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "mate.create";
+    let ty = str_(p, "type").ok_or_else(|| bad(cmd, "`type` must be touch, align, concentric or distance"))?;
+    let (kind, flip) = match ty {
+        "touch" | "distance" => ("planar", false),
+        "align" => ("planar", true),
+        "concentric" => ("cylindrical", false),
+        _ => return Err(bad(cmd, "`type` must be touch, align, concentric or distance")),
+    };
+    if ty == "concentric" && p.get("offset").is_some() {
+        return Err(bad(cmd, "a concentric mate has no `offset`"));
+    }
+    if ty == "distance" && p.get("offset").is_none() {
+        return Err(bad(cmd, "a distance mate needs `offset`"));
+    }
+    let mut q = json!({"type": kind, "flip": flip});
+    for k in ["a", "b", "offset", "name"] {
+        if let Some(v) = p.get(k) {
+            q[k] = v.clone();
+        }
+    }
+    joint(s, &q)
 }
 
 fn as_built(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1332,6 +1364,9 @@ mod face_tests;
 #[cfg(test)]
 #[path = "joint_frames_tests.rs"]
 mod frames_tests;
+#[cfg(test)]
+#[path = "mates_tests.rs"]
+mod mates_tests;
 #[cfg(test)]
 #[path = "joints_reach_tests.rs"]
 mod reach_tests;

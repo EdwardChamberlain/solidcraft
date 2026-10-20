@@ -682,11 +682,12 @@ fn rename_body(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// `sketch.reattach`: `sketch.redefine`, of the sketch being edited unless one is named.
 fn reattach_sketch(s: &mut Session, p: &Value) -> Result<Value> {
-    let mut q = p.clone();
+    let Some(mut q) = p.as_object().cloned() else { return Err(bad("sketch.reattach", "params must be an object")) };
     if q.get("sketch").is_none_or(Value::is_null) {
         let id = s.active_sketch.ok_or_else(|| bad("sketch.reattach", "no sketch is being edited: name one with `sketch`"))?;
-        q["sketch"] = json!(id);
+        q.insert("sketch".into(), json!(id));
     }
+    let q = Value::Object(q);
     super::find_command("sketch.redefine").ok_or_else(|| bad("sketch.reattach", "sketch.redefine"))?.run_nested(s, &q)
 }
 

@@ -21,6 +21,7 @@ fn joint(id: u64, a: u64, b: u64) -> Joint {
         flip: true,
         offset: 2.0,
         angle: 0.1,
+        tilt: 0.0,
         suppressed: false,
     }
 }

@@ -72,6 +72,57 @@ fn concentric_shares_the_axis() {
     assert!(c.x.abs() < 1e-6 && c.y.abs() < 1e-6, "{c:?}");
 }
 
+/// The direction B's face normal (its top, z up in the block) points in the world.
+fn up(s: &Session) -> Vec3 {
+    let o = place(s, "Block", Vec3::new(110.0, 110.0, 100.0));
+    place(s, "Block", Vec3::new(110.0, 110.0, 105.0)) - o
+}
+
+fn mate(s: &mut Session, ty: &str, extra: serde_json::Value) {
+    let mut p = json!({"type": ty, "a": {"occurrence": "Base", "face": [20, 20, 10]}, "b": {"occurrence": "Block", "face": [110, 110, 100]}});
+    if let (Some(o), Some(e)) = (p.as_object_mut(), extra.as_object()) {
+        o.extend(e.clone());
+    }
+    run(s, "mate.create", p);
+}
+
+#[test]
+fn parallel_keeps_the_faces_parallel_and_perpendicular_square() {
+    let mut s = pair();
+    mate(&mut s, "parallel", json!({}));
+    let u = up(&s);
+    assert!((u.z.abs() - 5.0).abs() < 1e-6 && u.x.abs() < 1e-6 && u.y.abs() < 1e-6, "parallel: {u:?}");
+    // Free to slide: a drive moves it in z, x and y.
+    let j = s.doc.assembly.joints[0].name.clone();
+    run(&mut s, "joint.drive", json!({"joint": j, "values": [7, 3, 4, 0]}));
+    let at = place(&s, "Block", Vec3::new(110.0, 110.0, 100.0));
+    // 4 mm above the face, and 7 and 3 mm across it (the face frame's x and y are its own choice).
+    assert!((at.z - 14.0).abs() < 1e-6 && ((at.x - 20.0).hypot(at.y - 20.0) - 58f64.sqrt()).abs() < 1e-6, "{at:?}");
+    let mut s = pair();
+    mate(&mut s, "perpendicular", json!({}));
+    let u = up(&s);
+    assert!(u.z.abs() < 1e-6 && (u.x.hypot(u.y) - 5.0).abs() < 1e-6, "perpendicular: {u:?}");
+}
+
+#[test]
+fn angle_holds_the_faces_at_the_angle() {
+    let mut s = pair();
+    mate(&mut s, "angle", json!({"angle": "30 deg"}));
+    let u = up(&s);
+    // 30 degrees from the base's normal (or its opposite), so z is 5·cos 30 either way.
+    assert!((u.z.abs() - 5.0 * 30f64.to_radians().cos()).abs() < 1e-6, "{u:?}");
+}
+
+#[test]
+fn fix_grounds_the_component_of_the_face() {
+    let mut s = pair();
+    run(&mut s, "mate.create", json!({"type": "fix", "a": {"occurrence": "Block", "face": [110, 110, 100]}}));
+    let o = s.doc.occurrences.iter().find(|o| o.component == s.doc.find_component("Block").unwrap_or(0)).map(|o| o.grounded);
+    assert_eq!(o, Some(true));
+    assert!(s.execute("mate.create", &json!({"type": "fix"})).is_err());
+    assert!(s.execute("mate.create", &json!({"type": "fix", "a": "root"})).is_err());
+}
+
 #[test]
 fn hostile_parameters_are_refused() {
     let mut s = pair();
@@ -84,6 +135,9 @@ fn hostile_parameters_are_refused() {
         json!({"type": "touch", "a": face("Base", 10.0), "b": face("Base", 0.0)}),
         json!({"type": "touch", "a": 7, "b": null}),
         json!({"type": "distance", "offset": "nan", "a": face("Base", 10.0), "b": face("Block", 100.0)}),
+        json!({"type": "angle", "a": face("Base", 10.0), "b": face("Block", 100.0)}),
+        json!({"type": "touch", "angle": "10 deg", "a": face("Base", 10.0), "b": face("Block", 100.0)}),
+        json!({"type": "angle", "angle": "oops", "a": face("Base", 10.0), "b": face("Block", 100.0)}),
     ] {
         assert!(s.execute("mate.create", &p).is_err(), "{p}");
     }

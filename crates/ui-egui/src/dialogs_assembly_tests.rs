@@ -648,3 +648,37 @@ fn mate_from_two_faces() {
     let bottom = solidcraft_engine::doc::apply_point(&w, Vec3::new(40.0, 10.0, 0.0));
     assert!((bottom.z - 14.0).abs() < 1e-6, "B's bottom face 4 mm above A's top: {bottom:?}");
 }
+
+/// Fix needs one face; Angle carries its angle; Parallel and Perpendicular need two faces.
+#[test]
+fn mate_types_fix_angle_parallel_and_perpendicular() {
+    let mut app = two_boxes();
+    app.start("mate.create");
+    let mut d = app.dialog.clone().unwrap();
+    let (fa, fb) = (face_sel(&app.session, Vec3::new(10.0, 10.0, 10.0)).unwrap(), face_sel(&app.session, Vec3::new(40.0, 10.0, 0.0)).unwrap());
+    d.pick(&app.session, fa);
+    let set = |d: &mut Dialog, m: usize| {
+        if let Kind::Assembly(Asm::Joint(f)) = &mut d.kind {
+            f.mate = Some(m);
+        }
+    };
+    set(&mut d, 7);
+    let c = apply_commands(&app, &d).unwrap();
+    assert_eq!((c[0].0.as_str(), c[0].1["type"].as_str()), ("mate.create", Some("fix")), "one face is enough: {c:?}");
+    assert!(c[0].1.get("b").is_none());
+    set(&mut d, 4);
+    assert!(apply_commands(&app, &d).is_err(), "parallel needs a second face");
+    d.pick(&app.session, fb);
+    for (m, ty) in [(4, "parallel"), (5, "perpendicular"), (6, "angle")] {
+        set(&mut d, m);
+        let c = apply_commands(&app, &d).unwrap();
+        assert_eq!(c[0].1["type"], ty);
+        assert_eq!(c[0].1.get("angle").is_some(), ty == "angle", "{c:?}");
+    }
+    set(&mut d, 6);
+    let c = apply_commands(&app, &d).unwrap();
+    for (name, p) in c {
+        app.run(&name, p).unwrap();
+    }
+    assert_eq!(app.session.doc.assembly.joints.first().map(|j| (j.kind, j.tilt.to_degrees().round())), Some((JointKind::Parallel, 45.0)));
+}

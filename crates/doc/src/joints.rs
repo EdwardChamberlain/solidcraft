@@ -203,6 +203,9 @@ pub enum JointKind {
     PinSlot,
     Planar,
     Ball,
+    /// Free to slide in all three directions and to turn about z; the faces stay parallel (or at
+    /// the joint's `tilt`): a parallel, perpendicular or angle mate.
+    Parallel,
 }
 
 impl JointKind {
@@ -215,6 +218,7 @@ impl JointKind {
             "pinslot" => JointKind::PinSlot,
             "planar" => JointKind::Planar,
             "ball" => JointKind::Ball,
+            "parallel" => JointKind::Parallel,
             _ => return None,
         })
     }
@@ -228,6 +232,7 @@ impl JointKind {
             JointKind::PinSlot => &["angle", "slide"],
             JointKind::Planar => &["x", "y", "angle"],
             JointKind::Ball => &["yaw", "pitch", "roll"],
+            JointKind::Parallel => &["x", "y", "z", "angle"],
         }
     }
     pub fn is_angle(self, i: usize) -> bool {
@@ -258,6 +263,9 @@ pub struct Joint {
     pub offset: f64,
     #[serde(default)]
     pub angle: f64,
+    /// B's frame turned about A's x axis (radians) before the offset: faces held at an angle.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub tilt: f64,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub suppressed: bool,
 }
@@ -458,6 +466,10 @@ impl Assembly {
     }
 }
 
+fn is_zero(v: &f64) -> bool {
+    *v == 0.0
+}
+
 /// A frame: origin and orthonormal axes, as a transform (local → parent).
 fn frame(o: Vec3, z: Vec3, x: Option<Vec3>) -> Option<Mat> {
     let z = z.normalized()?;
@@ -469,6 +481,10 @@ fn frame(o: Vec3, z: Vec3, x: Option<Vec3>) -> Option<Mat> {
 fn rot_z(a: f64) -> Mat {
     let (s, c) = a.sin_cos();
     [[c, s, 0.0, 0.0], [-s, c, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
+}
+fn rot_x(a: f64) -> Mat {
+    let (s, c) = a.sin_cos();
+    [[1.0, 0.0, 0.0, 0.0], [0.0, c, s, 0.0], [0.0, -s, c, 0.0], [0.0, 0.0, 0.0, 1.0]]
 }
 fn rot_y(a: f64) -> Mat {
     let (s, c) = a.sin_cos();
@@ -491,6 +507,7 @@ pub fn motion(kind: JointKind, q: &[f64]) -> Mat {
         JointKind::PinSlot => mat_mul(&shift(v(1), 0.0, 0.0), &rot_z(v(0))),
         JointKind::Planar => mat_mul(&shift(v(0), v(1), 0.0), &rot_z(v(2))),
         JointKind::Ball => mat_mul(&mat_mul(&rot_z(v(0)), &rot_y(v(1))), &rot_z(v(2))),
+        JointKind::Parallel => mat_mul(&shift(v(0), v(1), v(2)), &rot_z(v(3))),
     }
 }
 
@@ -727,6 +744,7 @@ pub fn joint_values(asm: &Assembly) -> BTreeMap<u64, Vec<f64>> {
 fn flip_of(j: &Joint) -> Mat {
     let mut m = rot_z(j.angle);
     m[3][2] = j.offset;
+    let m = if j.tilt == 0.0 { m } else { mat_mul(&m, &rot_x(j.tilt)) };
     if !j.flip { mat_mul(&m, &[[1.0, 0.0, 0.0, 0.0], [0.0, -1.0, 0.0, 0.0], [0.0, 0.0, -1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]) } else { m }
 }
 
@@ -1630,6 +1648,7 @@ mod tests {
                 flip: false,
                 offset: 0.0,
                 angle: 0.0,
+                tilt: 0.0,
                 suppressed: false,
             })
             .collect();

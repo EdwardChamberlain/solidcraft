@@ -20,14 +20,14 @@ pub static COMMANDS: &[CommandSpec] = &[
         "name?, occurrence?: id|name (default: from the pick, or the named face's component), face: [x,y,z] | \"<name>\" (centre of a planar face) | circle: [x,y,z] | \"<name>\" (centre of a round end: a point on its wall or rim, the end's centre, or the round face's name as model.faces lists it) | edge: [x,y,z] (a point on an edge of a planar face: the edge's middle, z out of the face, y into it; on?: [x,y,z] a point on the face (default: the larger planar face beside the edge); corner?: [x,y,z] near one end: the corner there, x and y along its two edges into the face; found again by name, so it follows the face as it changes size) | point: [x,y,z], z?: [x,y,z]; body?: the named face's body; end?: \"<name>\" (a circle's end: the face across its rim there; default the end nearer the pick); x?: [x,y,z] (a direction, world) | \"<face name>\" | {face: [x,y,z]} (the frame's x: a direction, a plane's normal, or the way to another hole's axis; keeps a round origin's turn). Faces are kept by name: the origin follows its face, and a circle its end, when the design changes",
     ),
     CommandSpec::new("joint.create", "Joint", joint).at("SOLID", "ASSEMBLE").icon("joint").key("J").params(
-        "type: rigid|revolute|slider|cylindrical|pin_slot|planar|ball; a, b: joint origins ({occurrence, face|circle|edge|point: [x,y,z] in world, or face|circle: \"<face name>\"; end?, x? as joint.origin} | origin name); \
+        "type: rigid|revolute|slider|cylindrical|pin_slot|planar|ball|parallel; a, b: joint origins ({occurrence, face|circle|edge|point: [x,y,z] in world, or face|circle: \"<face name>\"; end?, x? as joint.origin} | origin name); \
          values?: [angles in deg or expressions, distances]; limits?: [[min, max] | null…]; flip?: bool (default false: the origins are mated, \
          b's z against a's as two faces meet; true: b's z along a's, so two origins given at one point with the same z stay as they are); \
-         offset?; angle?; name?; quiet?: bool (leave out dof and fixed)",
+         offset?; angle?; tilt?: B turned about A's x axis (deg or an expression; faces held at an angle); name?; quiet?: bool (leave out dof and fixed)",
     ),
     CommandSpec::new("mate.create", "Mate", mate).at("SOLID", "ASSEMBLE").icon("joint").params(
-        "type: touch|align|concentric|distance; a, b: a face of each of two occurrences ({occurrence, face: [x,y,z] in world | \"<face name>\"}; concentric: round faces, {circle: …}) or joint origins as joint.create; \
-         offset?: the gap between the faces (distance needs it; touch and align accept it, default 0); name?. touch: the faces meet, outsides together; align: the faces point the same way, \
+        "type: touch|align|concentric|distance|parallel|perpendicular|angle|fix; a, b: a face of each of two occurrences ({occurrence, face: [x,y,z] in world | \"<face name>\"}; concentric: round faces, {circle: …}) or joint origins as joint.create; \
+         offset?: the gap between the faces (distance needs it; touch and align accept it, default 0); angle?: the angle between the faces (angle needs it: deg or an expression); name?. fix: only `a` (a face or occurrence): the component is grounded. parallel: the faces stay parallel and slide freely; perpendicular, angle: the faces stay square or at the angle and slide freely. touch: the faces meet, outsides together; align: the faces point the same way, \
          flush; concentric: the round faces share an axis; distance: touch with a gap. The mate leaves the parts free to slide along the face (or turn about the axis): \
          it is a planar or cylindrical joint, listed and driven as such",
     ),
@@ -594,6 +594,10 @@ fn joint(s: &mut Session, p: &Value) -> Result<Value> {
         flip: bool_(p, "flip").unwrap_or(false),
         offset,
         angle,
+        tilt: match p.get("tilt") {
+            Some(v) => value(s, v, true, cmd)?,
+            None => 0.0,
+        },
         suppressed: false,
     };
     add_joint(s, j, p)
@@ -603,12 +607,25 @@ fn joint(s: &mut Session, p: &Value) -> Result<Value> {
 /// align turns one to face the same way as the other, concentric lines two round faces up.
 fn mate(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "mate.create";
-    let ty = str_(p, "type").ok_or_else(|| bad(cmd, "`type` must be touch, align, concentric or distance"))?;
+    let ty = str_(p, "type").ok_or_else(|| bad(cmd, "`type` must be touch, align, concentric, distance, parallel, perpendicular, angle or fix"))?;
+    if ty == "fix" {
+        // The component of the face (or the occurrence) stays where it is, whatever else moves.
+        let a = p.get("a").ok_or_else(|| bad(cmd, "`a` (a face or an occurrence) is required"))?;
+        let occ = match a.get("occurrence") {
+            Some(o) => occurrence_id(s, Some(o), cmd)?,
+            None => occurrence_id(s, Some(a), cmd)?,
+        };
+        if occ == 0 {
+            return Err(bad(cmd, "the root has no component to fix"));
+        }
+        return s.execute("occurrence.ground", &json!({"occurrence": occ, "grounded": true}));
+    }
     let (kind, flip) = match ty {
         "touch" | "distance" => ("planar", false),
         "align" => ("planar", true),
         "concentric" => ("cylindrical", false),
-        _ => return Err(bad(cmd, "`type` must be touch, align, concentric or distance")),
+        "parallel" | "perpendicular" | "angle" => ("parallel", false),
+        _ => return Err(bad(cmd, "`type` must be touch, align, concentric, distance, parallel, perpendicular, angle or fix")),
     };
     if ty == "concentric" && p.get("offset").is_some() {
         return Err(bad(cmd, "a concentric mate has no `offset`"));
@@ -616,11 +633,22 @@ fn mate(s: &mut Session, p: &Value) -> Result<Value> {
     if ty == "distance" && p.get("offset").is_none() {
         return Err(bad(cmd, "a distance mate needs `offset`"));
     }
+    if ty == "angle" && p.get("angle").is_none() {
+        return Err(bad(cmd, "an angle mate needs `angle`"));
+    }
+    if p.get("angle").is_some() && ty != "angle" {
+        return Err(bad(cmd, "only an angle mate takes `angle`"));
+    }
     let mut q = json!({"type": kind, "flip": flip});
     for k in ["a", "b", "offset", "name"] {
         if let Some(v) = p.get(k) {
             q[k] = v.clone();
         }
+    }
+    match ty {
+        "perpendicular" => q["tilt"] = json!("90 deg"),
+        "angle" => q["tilt"] = p["angle"].clone(),
+        _ => {}
     }
     joint(s, &q)
 }
@@ -653,6 +681,7 @@ fn as_built(s: &mut Session, p: &Value) -> Result<Value> {
         flip: true, // as built: the origins coincide as they are, not mated
         offset: 0.0,
         angle: 0.0,
+        tilt: 0.0,
         suppressed: false,
     };
     add_joint(s, j, p)

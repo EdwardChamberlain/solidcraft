@@ -26,13 +26,13 @@ mod trace;
 pub use trace::{TraceForm, picked_point};
 
 /// Joint types in the order the Type box lists them (command names).
-pub const TYPES: [&str; 7] = ["rigid", "revolute", "slider", "cylindrical", "pin_slot", "planar", "ball"];
-const TYPE_LABELS: [&str; 7] = ["Rigid", "Revolute", "Slider", "Cylindrical", "Pin-slot", "Planar", "Ball"];
+pub const TYPES: [&str; 8] = ["rigid", "revolute", "slider", "cylindrical", "pin_slot", "planar", "ball", "parallel"];
+const TYPE_LABELS: [&str; 8] = ["Rigid", "Revolute", "Slider", "Cylindrical", "Pin-slot", "Planar", "Ball", "Parallel"];
 /// What a joint origin input accepts (snaps on faces, edges and vertices).
 pub const SNAPS: u16 = FACES | EDGES | VERTICES;
 /// Mate types in the order the Type box lists them (`mate.create`'s `type`).
-const MATES: [&str; 4] = ["touch", "align", "concentric", "distance"];
-const MATE_LABELS: [&str; 4] = ["Touch", "Align", "Concentric", "Distance"];
+const MATES: [&str; 8] = ["touch", "align", "concentric", "distance", "parallel", "perpendicular", "angle", "fix"];
+const MATE_LABELS: [&str; 8] = ["Touch", "Align", "Concentric", "Distance", "Parallel", "Perpendicular", "Angle", "Fix"];
 /// Commands whose effect is where occurrences sit (previewed on the placed model).
 const MOVES: [&str; 13] = [
     "joint.create",
@@ -186,6 +186,7 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
         "mate.create" => {
             let mut f = JointForm::new(false);
             f.mate = Some(0);
+            f.angle = "45 deg".into();
             (Asm::Joint(Box::new(f)), vec![SelInput::new("Face 1", FACES, false), SelInput::new("Face 2", FACES, false)])
         }
         "joint.as_built" => {
@@ -535,6 +536,11 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
                 if MATES.get(*m) == Some(&"distance") {
                     row_label(ui, "Distance");
                     enter |= field(ui, &mut f.offset[2]);
+                    ui.end_row();
+                }
+                if MATES.get(*m) == Some(&"angle") {
+                    row_label(ui, "Angle");
+                    enter |= field(ui, &mut f.angle);
                     ui.end_row();
                 }
                 return enter;
@@ -923,13 +929,20 @@ pub fn commands(app: &SolveApp, k: &Asm, inputs: &[SelInput]) -> Result<Vec<(Str
         }
         Asm::Joint(f) if f.mate.is_some() => {
             let ty = f.mate.and_then(|m| MATES.get(m)).copied().unwrap_or("touch");
-            let (a, b) = (snap(0, "the first face")?, snap(1, "the second face")?);
+            let a = snap(0, "the first face")?;
+            if ty == "fix" {
+                return Ok(cmd("mate.create", json!({"type": ty, "a": a.param})));
+            }
+            let b = snap(1, "the second face")?;
             if a.param.get("occurrence").is_some() && a.param.get("occurrence") == b.param.get("occurrence") {
                 return Err("the two faces are on the same component".into());
             }
             let mut p = json!({"type": ty, "a": a.param, "b": b.param});
             if ty == "distance" {
                 p["offset"] = json!(f.offset[2]);
+            }
+            if ty == "angle" {
+                p["angle"] = json!(f.angle);
             }
             cmd("mate.create", p)
         }

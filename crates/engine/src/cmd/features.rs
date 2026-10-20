@@ -51,12 +51,9 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SOLID", "CREATE")
         .icon("pattern_path")
         .params("features: [names] | bodies: [names]; path_sketch: sketch; path: [curve ids in order]; count; spacing (between instances) | distance (first to last); orientation?: identical|path; flip?: bool"),
-    CommandSpec::new("solid.pattern.feature", "Pattern Feature", pattern_feature)
+    CommandSpec::new("solid.pattern", "Pattern", pattern_layout_command)
         .icon("pattern_rect")
-        .params("layout?: linear|circular|path (default linear); features: [names]; then the parameters of the layout's command: solid.pattern.rectangular (linear), solid.pattern.circular (circular) or solid.pattern.path (path). Repeats the features, not their bodies: see solid.pattern.geometry for bodies"),
-    CommandSpec::new("solid.pattern.geometry", "Pattern Geometry", pattern_geometry)
-        .icon("pattern")
-        .params("layout?: linear|circular|path (default linear); bodies: [names] | components: [names]; then the parameters of the layout's command: solid.pattern.rectangular (linear), solid.pattern.circular (circular) or solid.pattern.path (path). Copies the bodies as they are, without their features: see solid.pattern.feature for features"),
+        .params("layout?: linear|circular|path (default linear); features: [names] (repeats the features) | bodies: [names] | components: [names] (copies them as they are); then the parameters of the layout's command: solid.pattern.rectangular (linear), solid.pattern.circular (circular) or solid.pattern.path (path)"),
     CommandSpec::new("solid.mirror", "Mirror", mirror).at("SOLID", "CREATE").icon("mirror").params("features: [names] | bodies: [names] (combine?: join with the original); plane: XY|XZ|YZ|construction plane name or id|{origin, normal}|{origin, x_dir, y_dir} (origin coordinates may be length expressions; the mirror follows them, or a construction plane)"),
     CommandSpec::new("solid.hole", "Hole", hole)
         .at("SOLID", "CREATE")
@@ -1321,9 +1318,10 @@ fn pattern_sources(s: &Session, p: &Value, cmd: &str) -> Result<(Vec<String>, Ve
     Ok((Vec::new(), bodies))
 }
 
-/// `solid.pattern.feature` / `solid.pattern.geometry`: one pattern command with the layout
-/// (linear, circular, along a path) a parameter, over features or over bodies.
-fn pattern_layout(s: &mut Session, p: &Value, cmd: &str, wanted: &[&str], refused: &[&str]) -> Result<Value> {
+/// `solid.pattern`: one pattern command with the layout (linear, circular, along a path) a
+/// parameter, over features or over bodies.
+fn pattern_layout_command(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "solid.pattern";
     let layout = str_(p, "layout").unwrap_or("linear").to_ascii_lowercase();
     let target = match layout.as_str() {
         "linear" | "rectangular" => "solid.pattern.rectangular",
@@ -1331,26 +1329,18 @@ fn pattern_layout(s: &mut Session, p: &Value, cmd: &str, wanted: &[&str], refuse
         "path" | "along_path" => "solid.pattern.path",
         other => return Err(bad(cmd, format!("unknown layout `{other}` (linear, circular, path)"))),
     };
-    if let Some(key) = refused.iter().find(|k| p.get(**k).is_some_and(|v| !v.is_null())) {
-        let other = if cmd == "solid.pattern.feature" { "solid.pattern.geometry" } else { "solid.pattern.feature" };
-        return Err(bad(cmd, format!("`{key}` is for {other}")));
+    let given = |k: &str| p.get(k).is_some_and(|v| !v.is_null());
+    if given("features") && (given("bodies") || given("components")) {
+        return Err(bad(cmd, "give `features` or `bodies`/`components`, not both"));
     }
-    if !wanted.iter().any(|k| p.get(*k).is_some_and(|v| !v.is_null())) {
-        return Err(bad(cmd, format!("give {}", wanted.join(" or "))));
+    if !(given("features") || given("bodies") || given("components")) {
+        return Err(bad(cmd, "give features, bodies or components"));
     }
     let mut q = p.clone();
     if let Value::Object(m) = &mut q {
         m.remove("layout");
     }
     super::find_command(target).ok_or_else(|| bad(cmd, target.to_string()))?.run_nested(s, &q)
-}
-
-fn pattern_feature(s: &mut Session, p: &Value) -> Result<Value> {
-    pattern_layout(s, p, "solid.pattern.feature", &["features"], &["bodies", "components"])
-}
-
-fn pattern_geometry(s: &mut Session, p: &Value) -> Result<Value> {
-    pattern_layout(s, p, "solid.pattern.geometry", &["bodies", "components"], &["features"])
 }
 
 fn pattern_rect(s: &mut Session, p: &Value) -> Result<Value> {

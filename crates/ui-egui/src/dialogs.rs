@@ -618,10 +618,10 @@ impl Dialog {
                 Kind::Measure { result: None, of: Vec::new(), show: None },
                 vec![SelInput::new("Items", FACES | EDGES | selection::VERTICES | selection::CURVES | PROFILES, true)],
             ),
-            "solid.pattern.rectangular" | "solid.pattern.feature" | "solid.pattern.geometry" => {
-                // Pattern Feature repeats features, Pattern Geometry bodies; the layout is the
-                // dialog's own Type (Linear to start with).
-                let objects = if id == "solid.pattern.feature" { selection::FEATURES } else { BODIES };
+            "solid.pattern.rectangular" | "solid.pattern" => {
+                // Pattern: what is repeated (bodies or features) and the layout are the dialog's
+                // own choices; Linear bodies to start with.
+                let objects = BODIES;
                 Dialog::new(Kind::PatternRect { count: "3".into(), spacing: "20 mm".into(), count2: "1".into(), spacing2: "20 mm".into() }, {
                     let vector = crate::dialogs_specify::accept(app);
                     vec![
@@ -1745,9 +1745,8 @@ fn placement_row(d: &mut Dialog, ui: &mut egui::Ui, vector: Accept) {
         _ => None,
     };
     if let Some(cur) = current {
-        // Pattern Feature and Pattern Geometry say what is repeated in the command; their Layout
-        // is how.
-        let layout = matches!(d.origin.as_deref(), Some("solid.pattern.feature" | "solid.pattern.geometry"));
+        // Pattern's layout (how) is chosen next to what is repeated (bodies or features).
+        let layout = d.origin.as_deref() == Some("solid.pattern");
         row_label(ui, if layout { "Layout" } else { "Type" });
         let mut ty = cur;
         combo(ui, "pat_type", if layout { &["Linear", "Circular", "Along Path"] } else { &["Rectangular", "Circular", "Path"] }, &mut ty);
@@ -1784,9 +1783,7 @@ fn placement_row(d: &mut Dialog, ui: &mut egui::Ui, vector: Accept) {
             d.extra.clear();
             d.advance();
         }
-        if !layout {
-            object_type_row(d, ui);
-        }
+        object_type_row(d, ui);
         return;
     }
     let Kind::Hole { opts, .. } = &mut d.kind else { return };
@@ -2386,8 +2383,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         || (matches!(d.kind, Kind::PatternRect { .. }) && d.inputs.first().is_some_and(|i| i.accept == selection::FEATURES));
     // Advanced: every datum dialog is "Datum Plane/Axis/Point", whatever its Type.
     let raw_title = match d.origin.as_deref() {
-        Some("solid.pattern.feature") => "PATTERN FEATURE",
-        Some("solid.pattern.geometry") => "PATTERN GEOMETRY",
+        Some("solid.pattern") => "PATTERN",
         Some("sketch.reattach") => "REATTACH SKETCH",
         _ if advanced => crate::dialogs_datum::class_title(&d.kind).unwrap_or_else(|| title(&d.kind)),
         _ => title(&d.kind),

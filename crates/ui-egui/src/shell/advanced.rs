@@ -37,6 +37,8 @@ pub fn set_pane(ctx: &egui::Context, pane: Pane) {
 }
 
 pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
+    // What picking an edge takes with it follows the selection bar.
+    crate::selection::set_intent(app.ui.selection_intent);
     // A part just made the work part: its Part Navigator (and the banner) comes forward.
     if let Some(work) = app.work.as_mut().filter(|w| w.fresh) {
         work.fresh = false;
@@ -44,7 +46,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         app.ui.show_browser = true;
     }
     toolbar::toolbar(app, ui);
-    selection_bar(app, ui);
+    super::selection_bar::show(app, ui);
     cue_line(app, ui);
     palette::palette_bar(app, ui);
     resource_bar(app, ui);
@@ -66,19 +68,6 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             viewport::show(app, ui);
         }
     });
-}
-
-/// The strip under the ribbon: what a click in the viewport picks.
-fn selection_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
-    let t = Tokens::get();
-    egui::Panel::top("sc_selection_bar").exact_size(28.0).frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(8, 3))).show(
-        ui,
-        |ui| {
-            ui.horizontal_centered(|ui| {
-                ui.menu_button(app.tr_label("Selection filter"), |ui| toolbar::selection_filter(app, ui));
-            });
-        },
-    );
 }
 
 /// The resource bar at the left edge: one vertical tab for each navigator. Clicking the open

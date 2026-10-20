@@ -7,9 +7,12 @@
 pub mod advanced;
 pub mod assembly_nav;
 pub mod classic;
+mod layout;
 pub mod part_nav;
 pub mod part_nav_tree;
 pub mod selection_bar;
+
+pub use layout::*;
 
 use crate::SolveApp;
 use crate::prefs::ModellingApproach;

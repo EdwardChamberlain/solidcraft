@@ -222,5 +222,5 @@ fn symmetric_is_an_end_not_a_start() {
     let p = params(&h);
     assert_eq!(p["direction"], "symmetric");
     assert!(p.get("start_offset").is_none(), "a symmetric extrude has no start offset");
-    assert!(h.widget("Start").is_none(), "and no Start to choose");
+    assert!(crate::scenario::handle_at("dialog:Start").is_none(), "and no Start to choose");
 }

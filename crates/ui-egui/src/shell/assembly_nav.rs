@@ -84,7 +84,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         .resizable(false)
         .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(6, 6)))
         .show(ui, |ui| {
-            ui.label(RichText::new(app.tr("ui.assembly_nav_heading")).size(11.0).strong().color(t.text_dim));
+            ui.label(RichText::new(app.tr("ui.assembly_nav_heading")).size(Tokens::get().font_small).strong().color(t.text_dim));
             ui.horizontal_wrapped(|ui| {
                 if ui.button(app.tr("ui.add_component")).clicked() {
                     app.start("component.insert_design");
@@ -154,12 +154,12 @@ fn one_row(app: &mut SolveApp, ui: &mut egui::Ui, row: &Row) {
             hover = format!("{hover}: {path}");
         }
         let label = label.on_hover_text(hover);
-        ui.label(RichText::new(format!("×{}", row.count)).size(11.0).color(t.text_dim));
+        ui.label(RichText::new(format!("×{}", row.count)).size(Tokens::get().font_small).color(t.text_dim));
         if row.grounded {
-            ui.label(RichText::new(app.tr("ui.component_fixed")).size(11.0).color(t.text_dim));
+            ui.label(RichText::new(app.tr("ui.component_fixed")).size(Tokens::get().font_small).color(t.text_dim));
         }
         if row.hidden {
-            ui.label(RichText::new(app.tr("ui.component_hidden")).size(11.0).color(t.text_dim));
+            ui.label(RichText::new(app.tr("ui.component_hidden")).size(Tokens::get().font_small).color(t.text_dim));
         }
         let mut open = false;
         if row.file.is_some() && row.found {

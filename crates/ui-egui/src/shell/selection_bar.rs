@@ -53,9 +53,9 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 // Type filter.
                 let filter = current_filter(&app.ui);
                 let label = filter.map_or("Custom", |i| FILTERS[i].0);
-                let r = ui.menu_button(RichText::new(app.tr_label(label)), |ui| {
+                let r = crate::ui_kit::Menu::button(ui, RichText::new(app.tr_label(label)), |ui| {
                     for (i, (name, ..)) in FILTERS.iter().enumerate() {
-                        let r = ui.selectable_label(filter == Some(i), app.tr_label(name));
+                        let r = crate::ui_kit::list_picker(ui, name, app.tr_label(name), filter == Some(i));
                         crate::scenario::publish_handle(&format!("selection:filter:{name}"), r.rect.center());
                         if r.clicked() {
                             set_filter(&mut app.ui, i);
@@ -63,15 +63,15 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                         }
                     }
                     ui.separator();
-                    ui.menu_button(app.tr_label("Customize"), |ui| toolbar::selection_filter(app, ui));
+                    crate::ui_kit::Menu::button(ui, app.tr_label("Customize"), |ui| toolbar::selection_filter(app, ui));
                 });
                 crate::scenario::publish_handle("selection:filter", r.response.rect.center());
                 r.response.on_hover_text(app.tr_label("Type filter"));
                 // Scope.
                 let label = SCOPES.iter().find(|(_, s)| *s == app.ui.selection_scope).map_or("", |(n, _)| *n);
-                let r = ui.menu_button(RichText::new(app.tr_label(label)), |ui| {
+                let r = crate::ui_kit::Menu::button(ui, RichText::new(app.tr_label(label)), |ui| {
                     for (name, scope) in SCOPES {
-                        let r = ui.selectable_label(app.ui.selection_scope == *scope, app.tr_label(name));
+                        let r = crate::ui_kit::list_picker(ui, name, app.tr_label(name), app.ui.selection_scope == *scope);
                         crate::scenario::publish_handle(&format!("selection:scope:{name}"), r.rect.center());
                         if r.clicked() {
                             app.ui.selection_scope = *scope;
@@ -83,9 +83,9 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 r.response.on_hover_text(app.tr_label("Scope"));
                 // Intent.
                 let label = INTENTS.iter().find(|(_, i)| *i == app.ui.selection_intent).map_or("", |(n, _)| *n);
-                let r = ui.menu_button(RichText::new(app.tr_label(label)), |ui| {
+                let r = crate::ui_kit::Menu::button(ui, RichText::new(app.tr_label(label)), |ui| {
                     for (name, intent) in INTENTS {
-                        let r = ui.selectable_label(app.ui.selection_intent == *intent, app.tr_label(name));
+                        let r = crate::ui_kit::list_picker(ui, name, app.tr_label(name), app.ui.selection_intent == *intent);
                         crate::scenario::publish_handle(&format!("selection:intent:{name}"), r.rect.center());
                         if r.clicked() {
                             app.ui.selection_intent = *intent;
@@ -98,10 +98,10 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 // Snap points: which inferences the sketch tools make.
                 let off = SNAP_KINDS.iter().filter(|(_, bit)| app.ui.snap_kinds & bit == 0).count();
                 let label = if off == 0 { "Snap Points".to_string() } else { format!("Snap Points ({} off)", off) };
-                let r = ui.menu_button(RichText::new(app.tr_label(&label)), |ui| {
+                let r = crate::ui_kit::Menu::button(ui, RichText::new(app.tr_label(&label)), |ui| {
                     for (name, bit) in SNAP_KINDS {
                         let mut on = app.ui.snap_kinds & bit != 0;
-                        let r = ui.checkbox(&mut on, app.tr_label(name));
+                        let r = crate::ui_kit::checkbox(ui, app.tr_label(name), &mut on);
                         crate::scenario::publish_handle(&format!("selection:snap:{name}"), r.rect.center());
                         if r.changed() {
                             app.ui.snap_kinds = if on { app.ui.snap_kinds | bit } else { app.ui.snap_kinds & !bit };

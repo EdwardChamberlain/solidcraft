@@ -9,7 +9,8 @@ use solidcraft_engine::Sel;
 use solidcraft_engine::geom::Vec3;
 
 use crate::SolveApp;
-use crate::dialogs::{self, Dialog, Kind, OP_LABELS, TO_OBJECT, field, row_label, section};
+use crate::dialogs::{self, Dialog, Kind, OP_LABELS, TO_OBJECT, field, section};
+use crate::ui_kit;
 
 const START_TYPES: [&str; 3] = ["Profile Plane", "Value (Other Side)", "Symmetric Value"];
 const END_TYPES: [&str; 2] = ["Value", "Until Selected"];
@@ -73,9 +74,9 @@ pub fn rows(app: &SolveApp, d: &mut Dialog, ui: &mut Ui) -> bool {
     }
     let Kind::Revolve { operation, .. } = &mut d.kind else { return enter };
     if section(ui, "revolve_boolean", "Boolean", true) {
-        row_label(ui, "Operation");
-        dialogs::combo(ui, "rv_op", &OP_LABELS, operation);
-        ui.end_row();
+        ui_kit::row(ui, "Operation", |ui| {
+            dialogs::combo(ui, "rv_op", &OP_LABELS, operation);
+        });
     }
     enter
 }
@@ -94,9 +95,9 @@ fn limits(app: &SolveApp, d: &mut Dialog, ui: &mut Ui) -> bool {
     // Until Selected has no sides: the Start is the profile plane then.
     if !to_object {
         let current = start_type;
-        row_label(ui, "Start");
-        dialogs::combo(ui, "rv_start_type", &START_TYPES, &mut start_type);
-        ui.end_row();
+        ui_kit::row(ui, "Start", |ui| {
+            dialogs::combo(ui, "rv_start_type", &START_TYPES, &mut start_type);
+        });
         if start_type != current {
             d.extra.remove("angle2");
             d.extra.remove("direction");
@@ -111,19 +112,19 @@ fn limits(app: &SolveApp, d: &mut Dialog, ui: &mut Ui) -> bool {
             }
         }
         if start_type == 1 {
-            row_label(ui, "Angle");
-            enter |= dialogs::extra_field(ui, &mut d.extra, "angle2", "90 deg");
-            ui.end_row();
+            ui_kit::row(ui, "Angle", |ui| {
+                enter |= dialogs::extra_field(ui, &mut d.extra, "angle2", "90 deg");
+            });
         }
     }
-    row_label(ui, "End");
-    dialogs::combo(ui, "rv_end_type", &END_TYPES, &mut end);
-    ui.end_row();
+    ui_kit::row(ui, "End", |ui| {
+        dialogs::combo(ui, "rv_end_type", &END_TYPES, &mut end);
+    });
     if end == 0 {
         if let Kind::Revolve { angle, .. } = &mut d.kind {
-            row_label(ui, if start_type == 2 { "Angle (total)" } else { "Angle" });
-            enter |= field(ui, angle);
-            ui.end_row();
+            ui_kit::row(ui, if start_type == 2 { "Angle (total)" } else { "Angle" }, |ui| {
+                enter |= field(ui, angle);
+            });
         }
     } else {
         d.extra.remove("angle2");

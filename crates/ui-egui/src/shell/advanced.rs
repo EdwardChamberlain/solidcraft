@@ -11,7 +11,7 @@
 use egui::RichText;
 
 use crate::theme::Tokens;
-use crate::{SolveApp, agent_chat, palette, preview, render_workspace, toolbar, viewport};
+use crate::{SolveApp, agent_chat, preview, render_workspace, theme, toolbar, viewport};
 
 /// Which navigator the left pane shows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -47,9 +47,9 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         app.ui.show_browser = true;
     }
     toolbar::toolbar(app, ui);
+    theme::TabAccent::publish(app, ui.ctx());
     super::selection_bar::show(app, ui);
     cue_line(app, ui);
-    palette::palette_bar(app, ui);
     resource_bar(app, ui);
     if app.ui.show_browser {
         match pane(ui.ctx()) {
@@ -83,7 +83,7 @@ fn resource_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             for (which, label, key) in [(Pane::Part, "Part Navigator", "part"), (Pane::Assembly, "Assembly Navigator", "assembly")] {
                 let text = app.tr_label(label).to_string();
-                let galley = ui.painter().layout_no_wrap(text.clone(), egui::FontId::proportional(12.0), t.text);
+                let galley = ui.painter().layout_no_wrap(text.clone(), egui::FontId::proportional(t.font_label), t.text);
                 let height = galley.size().x + 20.0;
                 let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::click());
                 response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &text));
@@ -96,7 +96,7 @@ fn resource_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 }
                 // Text reads bottom to top, as on a resource bar.
                 let colour = if shown { t.text } else { t.text_dim };
-                let galley = ui.painter().layout_no_wrap(text, egui::FontId::proportional(12.0), colour);
+                let galley = ui.painter().layout_no_wrap(text, egui::FontId::proportional(t.font_label), colour);
                 let at = egui::pos2(rect.center().x - galley.size().y / 2.0, rect.bottom() - 10.0);
                 ui.painter().add(egui::epaint::TextShape::new(at, galley, colour).with_angle(-std::f32::consts::FRAC_PI_2));
                 if response.clicked() {
@@ -150,7 +150,7 @@ fn cue_line(app: &mut SolveApp, ui: &mut egui::Ui) {
         ui,
         |ui| {
             ui.horizontal_centered(|ui| {
-                let response = ui.label(RichText::new(text).size(12.0).color(t.text));
+                let response = ui.label(RichText::new(text).size(t.font_label).color(t.text));
                 crate::scenario::publish_rect("cue_line", response.rect);
             });
         },

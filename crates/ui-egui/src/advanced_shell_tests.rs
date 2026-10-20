@@ -11,6 +11,10 @@ fn every_advanced_ribbon_command_exists_and_every_tab_has_panels() {
         let lists = panel_lists(tab);
         assert!(!lists.is_empty(), "{tab} has no panels");
         for (panel, cmds, promoted) in lists {
+            // The selection filter is the selection bar's in this approach.
+            if panel == "SELECT" {
+                continue;
+            }
             assert!(!cmds.is_empty(), "{tab}/{panel} lists no commands");
             assert!(promoted >= 1 && promoted <= cmds.len(), "{tab}/{panel}: {promoted} buttons of {}", cmds.len());
         }
@@ -33,14 +37,14 @@ fn every_advanced_ribbon_command_exists_and_every_tab_has_panels() {
 fn the_advanced_ribbon_shows_its_tabs_and_classic_keeps_its_own() {
     let mut h = Harness::new();
     h.frames(3);
-    assert!(rect_of("toolbar_tab:SOLID").is_some() && rect_of("toolbar_tab:HOME").is_none());
+    assert!(rect_of("toolbar_tab:MODEL").is_some() && rect_of("toolbar_tab:HOME").is_none());
     h.app.preferences.modelling_approach = ModellingApproach::Advanced;
     h.frames(3);
     assert_eq!(h.app.ui.tab, "HOME");
     for tab in ADVANCED_TABS {
         assert!(rect_of(&format!("toolbar_tab:{tab}")).is_some(), "no {tab} tab");
     }
-    assert!(rect_of("toolbar_tab:SOLID").is_none());
+    assert!(rect_of("toolbar_tab:MODEL").is_none());
     // A sketch adds the contextual tab and leaving it returns to Home.
     h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
     h.frames(3);
@@ -50,7 +54,7 @@ fn the_advanced_ribbon_shows_its_tabs_and_classic_keeps_its_own() {
     assert_eq!(h.app.ui.tab, "HOME");
     h.app.preferences.modelling_approach = ModellingApproach::Classic;
     h.frames(3);
-    assert_eq!(h.app.ui.tab, "SOLID");
+    assert_eq!(h.app.ui.tab, "MODEL");
 }
 
 fn advanced() -> Harness {

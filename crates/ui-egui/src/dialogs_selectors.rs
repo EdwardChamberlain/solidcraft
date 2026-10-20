@@ -5,7 +5,8 @@
 use egui::Ui;
 
 use crate::SolveApp;
-use crate::dialogs::{self, Dialog, Kind, field, row_label, section};
+use crate::dialogs::{self, Dialog, Kind, field, section};
+use crate::ui_kit;
 
 /// The rows of a dialog that has a plane selector. `true` when Enter was pressed in a value.
 pub fn rows(app: &SolveApp, d: &mut Dialog, ui: &mut Ui) -> bool {
@@ -24,11 +25,11 @@ pub fn rows(app: &SolveApp, d: &mut Dialog, ui: &mut Ui) -> bool {
             }
             // Feature replay retains the source operation; Join is for body copies.
             if !d.inputs.first().is_some_and(|i| i.accept == crate::selection::FEATURES) && section(ui, "mirror_settings", "Settings", true) {
-                row_label(ui, "Operation");
-                let mut op = usize::from(d.extra.get("combine").and_then(serde_json::Value::as_bool).unwrap_or(false));
-                dialogs::combo(ui, "mi_op", &["New Body", "Join"], &mut op);
-                d.extra.insert("combine".into(), serde_json::json!(op == 1));
-                ui.end_row();
+                ui_kit::row(ui, "Operation", |ui| {
+                    let mut op = usize::from(d.extra.get("combine").and_then(serde_json::Value::as_bool).unwrap_or(false));
+                    dialogs::combo(ui, "mi_op", &["New Body", "Join"], &mut op);
+                    d.extra.insert("combine".into(), serde_json::json!(op == 1));
+                });
             }
         }
         Kind::Draft { .. } => {
@@ -45,9 +46,9 @@ pub fn rows(app: &SolveApp, d: &mut Dialog, ui: &mut Ui) -> bool {
             if section(ui, "draft_angle", "Angle", true)
                 && let Kind::Draft { angle } = &mut d.kind
             {
-                row_label(ui, "Angle");
-                enter |= field(ui, angle);
-                ui.end_row();
+                ui_kit::row(ui, "Angle", |ui| {
+                    enter |= field(ui, angle);
+                });
             }
         }
         Kind::PatternRect { .. } => {

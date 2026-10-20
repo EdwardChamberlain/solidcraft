@@ -31,6 +31,8 @@ mod markdown;
 mod markdown_view;
 mod panel;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod paste;
+#[cfg(not(target_arch = "wasm32"))]
 mod process;
 pub mod settings;
 
@@ -301,6 +303,8 @@ pub struct AgentChat {
     state: Option<State>,
     agent: String,
     images: bool,
+    /// The agent takes documents (PDFs) in a message.
+    documents: bool,
     /// Send a picture of the view with the next message.
     pub attach_view: bool,
     auth: Vec<acp::AuthMethod>,
@@ -333,6 +337,8 @@ pub struct AgentChat {
     pub(crate) attachments: Vec<attach::Attachment>,
     /// Pictures pasted so far, to name the next one.
     pasted: usize,
+    /// When the last text paste arrived (input time), so the V key coming up after it isn't a second paste.
+    pub(crate) text_pasted_at: Option<f64>,
     /// The chips' thumbnails, by the picture they show.
     thumbs: std::collections::HashMap<u64, egui::TextureHandle>,
     /// The last id given to a file added to a message.
@@ -508,6 +514,7 @@ impl AgentChat {
     /// Take in what the backend reported.
     fn on_event(&mut self, e: Event) -> Option<Outcome> {
         match e {
+            Event::Documents(documents) => self.documents = documents,
             Event::Ready { agent, images } => {
                 self.agent = agent;
                 self.images = images;
@@ -631,9 +638,65 @@ pub fn shown(app: &SolveApp) -> bool {
     app.preferences.ai_features && cfg!(not(target_arch = "wasm32"))
 }
 
-/// The AI button at the toolbar row's right end is shown.
-pub fn toolbar_button_shown(app: &SolveApp) -> bool {
+/// The Assistant button in the application bar is shown (honours the existing preference).
+pub fn app_bar_button_shown(app: &SolveApp) -> bool {
     shown(app) && app.preferences.ai_toolbar_button
+}
+
+/// The application bar's status mark, independent of panel layout and painting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AssistantMark {
+    Quiet,
+    Ready,
+    Busy,
+    NeedsAuth,
+    Stopped,
+    Waiting(usize),
+}
+
+fn assistant_mark_for(state: State, login: &str, configured: bool, waiting: usize, stopped: bool, failed: bool) -> AssistantMark {
+    if waiting > 0 {
+        return AssistantMark::Waiting(waiting);
+    }
+    if state == State::NeedsAuth {
+        return AssistantMark::NeedsAuth;
+    }
+    if state == State::Exited || stopped || failed {
+        return AssistantMark::Stopped;
+    }
+    match state {
+        State::Busy | State::Starting => AssistantMark::Busy,
+        // A live session is stronger evidence than an older discovery login probe.
+        State::Ready => AssistantMark::Ready,
+        State::Off if configured && matches!(login, "signed_in" | "key") => AssistantMark::Ready,
+        State::Off if configured && login == "signed_out" => AssistantMark::NeedsAuth,
+        _ => AssistantMark::Quiet,
+    }
+}
+
+pub(crate) fn assistant_mark(app: &SolveApp) -> AssistantMark {
+    let chat = &app.agent_chat;
+    let current = agents::current(app);
+    assistant_mark_for(
+        chat.state(),
+        current.as_ref().map_or("", |e| e.login),
+        current.is_some(),
+        chat.waiting(),
+        chat.stopped,
+        chat.ended.as_deref() == Some("error"),
+    )
+}
+
+pub(crate) fn assistant_tip(mark: AssistantMark) -> String {
+    let state = match mark {
+        AssistantMark::Quiet => tr("ui.agent_chat_state_off").to_string(),
+        AssistantMark::Ready => tr("ui.agent_chat_state_ready").to_string(),
+        AssistantMark::Busy => tr("ui.agent_chat_state_busy").to_string(),
+        AssistantMark::NeedsAuth => tr("ui.agent_chat_state_auth").to_string(),
+        AssistantMark::Stopped => tr("ui.agent_chat_state_exited").to_string(),
+        AssistantMark::Waiting(count) => trf("ui.assistant_waiting", &[("count", &count.to_string())]),
+    };
+    format!("{} (Ctrl+Shift+A) — {state}", tr("ui.assistant"))
 }
 
 /// Whether a permission question is about one of SolidCraft's own tools (which SolidCraft's own
@@ -956,14 +1019,14 @@ fn start_turn(app: &mut SolveApp, text: String, image: bool, at: Option<usize>, 
 /// files are named after the text (text files in full), and pictures go as images to an agent
 /// that takes them. `at` is the message's place in the conversation, where its picture is kept.
 fn start_turn_with(app: &mut SolveApp, text: String, image: bool, at: Option<usize>, files: Vec<attach::Attachment>, note: Option<&str>) {
-    let pictures = app.agent_chat.images;
+    let (pictures, documents) = (app.agent_chat.images, app.agent_chat.documents);
     let lead = match note {
         Some(n) => format!("{n}\n\n{text}"),
         None => text.clone(),
     };
     // The whole message stays within the cap: the files' text gets what the words leave.
     let budget = MAX_PROMPT.saturating_sub(lead.chars().count() + FILE_NAMES_ROOM);
-    let about_files = attach::note(&files, pictures, budget);
+    let about_files = attach::note(&files, pictures, documents, budget);
     let sent: String = format!("{lead}{about_files}").chars().take(MAX_PROMPT).collect();
     let mut parts = vec![PromptPart::Text(sent)];
     if image {
@@ -975,9 +1038,7 @@ fn start_turn_with(app: &mut SolveApp, text: String, image: bool, at: Option<usi
             Err(e) => log::warn!("the view's picture is left out of the prompt: {e}"),
         }
     }
-    if pictures {
-        parts.extend(attach::parts(&files));
-    }
+    parts.extend(attach::parts(&files, pictures, documents));
     // The undo step is named after the message, or its first file when it has no words.
     let first_line = text.lines().find(|l| !l.trim().is_empty()).or_else(|| files.first().map(|f| f.name.as_str())).unwrap_or("");
     let label: String = first_line.chars().take(48).collect();
@@ -1013,9 +1074,10 @@ pub fn attach_path(app: &mut SolveApp, path: &str) -> std::result::Result<String
         crate::file_load::begin_request(app, request).map_err(|e| trf("ui.agent_chat_import_failed", &[("name", &name), ("error", &e)]))?;
         return Ok(app.agent_chat.importing(name, rx));
     } else {
-        // A picture is decoded off the window thread: a large one takes long enough to stop it.
+        // A picture is decoded and a PDF read off the window thread: a large one takes long enough
+        // to stop it.
         #[cfg(not(target_arch = "wasm32"))]
-        if attach::kind(p) == attach::Kind::Picture {
+        if matches!(attach::kind(p), attach::Kind::Picture | attach::Kind::Pdf) {
             // A missing file is said at once; reading and decoding wait for the worker.
             if !p.is_file() {
                 return Err(trf("ui.agent_chat_file_not_a_file", &[("name", &attach::name_of(p))]));
@@ -1650,6 +1712,7 @@ pub fn status(app: &SolveApp) -> Value {
         "state": c.state().id(),
         "agent": c.agent,
         "images": c.images,
+        "documents": c.documents,
         "authStatus": c.auth_status,
         "authMethods": c.auth.iter().map(|m| json!({"id": m.id, "name": m.name, "kind": match &m.kind { acp::AuthKind::Agent => "agent", acp::AuthKind::Terminal { .. } => "terminal", acp::AuthKind::EnvVar { .. } => "env_var" }})).collect::<Vec<_>>(),
         "toolsPort": c.tools_port,

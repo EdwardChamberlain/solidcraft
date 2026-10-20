@@ -13,6 +13,7 @@ use solidcraft_engine::Sel;
 use crate::SolveApp;
 use crate::dialogs::{Dialog, Kind};
 use crate::selection::{self, AXES, Accept, BODIES, CURVES, EDGES, FACES, PLANAR_FACES, PLANES, POINTS, SelInput};
+use crate::ui_kit;
 use solidcraft_engine::doc::construct::{AxisDef, GeoRef, PointDef};
 use solidcraft_engine::doc::{FeatureKind, PlaneRef};
 
@@ -227,9 +228,9 @@ pub fn type_row(app: &SolveApp, d: &mut Dialog, ui: &mut Ui) {
     let mut picked = old;
     let mut labels: Vec<&str> = vec!["Inferred"];
     labels.extend(types.iter().map(|(_, label)| *label));
-    crate::dialogs::row_label(ui, "Type");
-    crate::dialogs::combo(ui, "datum_type", &labels, &mut picked);
-    ui.end_row();
+    ui_kit::row(ui, "Type", |ui| {
+        crate::dialogs::combo(ui, "datum_type", &labels, &mut picked);
+    });
     if picked == old {
         return;
     }
@@ -371,19 +372,13 @@ pub fn inferred_value_row(ui: &mut Ui, class: Class, picked: usize, value: &mut 
         (Class::Plane | Class::Point, _) => "Position (0 to 1)",
         _ => return false,
     };
-    crate::dialogs::row_label(ui, label);
-    let enter = crate::dialogs::field(ui, value);
-    ui.end_row();
-    enter
+    ui_kit::row(ui, label, |ui| crate::dialogs::field(ui, value))
 }
 
 /// The typed value row of a shared-dialog method, if it has one.
 pub fn value_row(ui: &mut Ui, method: usize, value: &mut String) -> bool {
     let Some((_, label, _)) = METHODS.get(method).and_then(|m| m.value) else { return false };
-    crate::dialogs::row_label(ui, label);
-    let enter = crate::dialogs::field(ui, value);
-    ui.end_row();
-    enter
+    ui_kit::row(ui, label, |ui| crate::dialogs::field(ui, value))
 }
 
 /// A pick as the reference the `construct.*` commands take.
@@ -486,7 +481,7 @@ fn sel_of(app: &SolveApp, g: &GeoRef) -> Option<Sel> {
         GeoRef::Plane { plane } => crate::dialogs::plane_sel(s, plane),
         GeoRef::Face { at, .. } => crate::dialogs::face_sel(s, *at),
         GeoRef::Edge { at, .. } => crate::dialogs::edge_sel(s, *at),
-        GeoRef::Vertex { at } => crate::dialogs::vertex_sel(s, *at),
+        GeoRef::Vertex { at, .. } => crate::dialogs::vertex_sel(s, *at),
         GeoRef::World { axis } | GeoRef::Axis { name: axis } => Some(Sel::Axis { name: axis.clone() }),
         GeoRef::SketchCurve { curve, .. } => Some(Sel::SketchCurve { id: curve.clone() }),
         GeoRef::SketchPoint { sketch, point } => Some(Sel::SketchPoint { id: format!("{sketch}:{point}") }),

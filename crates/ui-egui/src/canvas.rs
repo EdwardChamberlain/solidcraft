@@ -992,6 +992,10 @@ pub(crate) fn revolve_axis(app: &SolveApp, d: &Dialog) -> Option<(Vec3, Vec3)> {
     if !matches!(d.kind, Kind::Revolve { .. }) {
         return None;
     }
+    // Advanced: the axis is a specifier's, which may be a reversed or computed line.
+    if !d.specs.is_empty() {
+        return crate::dialogs_revolve::axis_line(app, d);
+    }
     if let Some(selected) = d.inputs.get(1)?.items.first() {
         if let Sel::Axis { name } = selected
             && matches!(name.as_str(), "X" | "Y" | "Z")

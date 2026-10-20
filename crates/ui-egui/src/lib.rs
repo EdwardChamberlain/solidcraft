@@ -38,6 +38,7 @@ pub mod dialogs_motion;
 pub mod dialogs_move;
 pub mod dialogs_parts;
 pub mod dialogs_plastic;
+pub mod dialogs_revolve;
 pub mod dialogs_save_mesh;
 pub mod dialogs_sheet;
 pub mod dialogs_specify;
@@ -118,6 +119,8 @@ mod file_load;
 mod file_picker;
 #[cfg(test)]
 mod history_off_thread_tests;
+#[cfg(test)]
+mod revolve_layout_tests;
 pub use file_picker::FilePickerFuture;
 #[cfg(test)]
 mod blend_arrow_tests;

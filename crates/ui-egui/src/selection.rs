@@ -49,11 +49,13 @@ pub struct SelInput {
     pub items: Vec<Sel>,
     /// 0 for the dialog's own input; `n` for an input of its `n`th specifier (counting from 1).
     pub owner: usize,
+    /// What an empty input says instead of "Select": what it stands for when nothing is picked.
+    pub placeholder: Option<&'static str>,
 }
 
 impl SelInput {
     pub fn new(label: &'static str, accept: Accept, multi: bool) -> SelInput {
-        SelInput { label, accept, multi, items: Vec::new(), owner: 0 }
+        SelInput { label, accept, multi, items: Vec::new(), owner: 0, placeholder: None }
     }
 
     /// The selection a hit stands for, if this input accepts it.

@@ -82,27 +82,7 @@ const ADVANCED_FEATURE: &[&str] = &[
     "solid.combine",
 ];
 
-const ADVANCED_DATUM: &[&str] = &[
-    "construct.plane.offset",
-    "construct.plane.at_angle",
-    "construct.plane.midplane",
-    "construct.plane.three_points",
-    "construct.plane.two_edges",
-    "construct.plane.tangent",
-    "construct.plane.along_path",
-    "construct.plane.perpendicular",
-    "construct.axis.through_cylinder",
-    "construct.axis.normal_to_face",
-    "construct.axis.two_planes",
-    "construct.axis.two_points",
-    "construct.axis.edge",
-    "construct.point.vertex",
-    "construct.point.two_edges",
-    "construct.point.three_planes",
-    "construct.point.center",
-    "construct.point.edge_plane",
-    "construct.point.along_path",
-];
+const ADVANCED_DATUM: &[&str] = &["datum.plane", "datum.axis", "datum.point"];
 
 const ADVANCED_PATTERN: &[&str] =
     &["solid.pattern.feature", "solid.pattern.geometry", "solid.mirror", "solid.pattern.rectangular", "solid.pattern.circular", "solid.pattern.path"];

@@ -292,7 +292,8 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         if app.custom_titlebar || app.integrated_titlebar {
             crate::titlebar::drag_area(ui, r);
         }
-        let left = r.left() + if app.integrated_titlebar { crate::titlebar::TRAFFIC_LIGHTS } else { 0.0 };
+        let fullscreen = ui.ctx().input(|i| i.viewport().fullscreen.unwrap_or(false));
+        let left = r.left() + crate::titlebar::leading_space(app.integrated_titlebar, fullscreen);
         // Keep the current header controls and product name when merging the new mark.
         let compact_actions = r.right() - left < 640.0;
         // Brand mark: the SolidCraft logo, drawn in code from the SVG's own coordinates
@@ -768,8 +769,13 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 (panel, cmds, shown)
             })
             .collect();
-        let sizes: Vec<PanelSize> =
-            lists.iter().map(|(panel, _, shown)| PanelSize { buttons: shown.len(), labelled: tab == "SKETCH" && *panel == "CREATE" }).collect();
+        let sizes: Vec<PanelSize> = lists
+            .iter()
+            .map(|(panel, _, shown)| PanelSize {
+                buttons: shown.len(),
+                labelled: tab == "SKETCH" && *panel == "CREATE" || advanced && tab == "HOME" && *panel == "DATUM",
+            })
+            .collect();
         // The AI button keeps the toolbar row's right end, whatever the ribbon's width
         // (docs/agent-chat.md); panels that no longer fit go to the » menu as usual.
         let right = if crate::agent_chat::toolbar_button_shown(app) { r.right() - AI_BUTTON_ROOM } else { r.right() };
@@ -789,9 +795,12 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
             let collapsed = plan.fit == Fit::Collapsed;
             let width = plan.width();
             let sketch_create = tab == "SKETCH" && *panel == "CREATE";
+            // Advanced Home > Datum: a button each for a plane, an axis and a point, each with its
+            // ways of being defined in a drop-down.
+            let datums = advanced && tab == "HOME" && *panel == "DATUM";
             let stride = plan.stride;
-            // Sketch > Create's buttons carry their label while there's room for one.
-            let labelled = sketch_create && plan.labels();
+            // Sketch > Create's and the datums' buttons carry their label while there's room for one.
+            let labelled = (sketch_create || datums) && plan.labels();
             // Buttons that went into the drop-down for want of room are still listed there.
             let trimmed = plan.shown < shown.len();
             let enabled_panel = !cmds.is_empty() || *panel == "SELECT";
@@ -830,8 +839,13 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
             for (i, c) in shown.iter().enumerate().take(drawn) {
                 // Only the family's default pin follows the part's choice. Explicitly pinned
                 // variants remain exact commands, including in customised toolbars.
-                let family = crate::sketch_families::family(c.id).filter(|f| sketch_create && f.commands.first().copied() == Some(c.id));
-                let selected = family.and_then(|f| app.sketch_choices.selected(f)).unwrap_or(c);
+                let family = if datums {
+                    crate::sketch_families::datum_family(c.id)
+                } else {
+                    crate::sketch_families::family(c.id).filter(|f| sketch_create && f.commands.first().copied() == Some(c.id))
+                };
+                // A datum button is always the one datum; the ways are in its drop-down.
+                let selected = family.filter(|_| !datums).and_then(|f| app.sketch_choices.selected(f)).unwrap_or(c);
                 let whole = Rect::from_min_size(pos2(bx + i as f32 * stride, top + 2.0), vec2(stride - 2.0, 38.0));
                 let mut br = whole;
                 if family.is_some() {

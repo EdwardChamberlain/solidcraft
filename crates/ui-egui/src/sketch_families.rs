@@ -40,6 +40,53 @@ pub const FAMILIES: &[Family] = &[
     Family { label: "Spline", commands: &["sketch.spline.fit_point", "sketch.spline.control_point", "sketch.spline.control_point_5"] },
 ];
 
+/// The datum buttons of the Advanced Home tab: one umbrella command each (the first), then the
+/// ways to define that datum, which the button's drop-down lists.
+pub const DATUM_FAMILIES: &[Family] = &[
+    Family {
+        label: "Plane",
+        commands: &[
+            "datum.plane",
+            "construct.plane.offset",
+            "construct.plane.at_angle",
+            "construct.plane.midplane",
+            "construct.plane.three_points",
+            "construct.plane.two_edges",
+            "construct.plane.tangent",
+            "construct.plane.along_path",
+            "construct.plane.perpendicular",
+        ],
+    },
+    Family {
+        label: "Axis",
+        commands: &[
+            "datum.axis",
+            "construct.axis.through_cylinder",
+            "construct.axis.normal_to_face",
+            "construct.axis.two_planes",
+            "construct.axis.two_points",
+            "construct.axis.edge",
+        ],
+    },
+    Family {
+        label: "Point",
+        commands: &[
+            "datum.point",
+            "construct.point.vertex",
+            "construct.point.two_edges",
+            "construct.point.three_planes",
+            "construct.point.center",
+            "construct.point.edge_plane",
+            "construct.point.along_path",
+        ],
+    },
+];
+
+/// The datum family a button stands for (its umbrella command).
+pub fn datum_family(id: &str) -> Option<&'static Family> {
+    DATUM_FAMILIES.iter().find(|f| f.commands.first().copied() == Some(id))
+}
+
 pub fn family(id: &str) -> Option<&'static Family> {
     FAMILIES.iter().find(|f| f.commands.contains(&id))
 }
@@ -65,6 +112,18 @@ impl Choices {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn datum_families_are_registered_and_disjoint() {
+        let mut seen = std::collections::BTreeSet::new();
+        for f in DATUM_FAMILIES {
+            for id in f.commands {
+                assert!(seen.insert(id), "duplicate {id}");
+                assert!(solidcraft_engine::find_command(id).is_some(), "{id}");
+            }
+            assert!(f.commands.first().is_some_and(|id| id.starts_with("datum.")), "{} starts with its umbrella", f.label);
+        }
+    }
 
     #[test]
     fn families_are_disjoint_registered_creation_commands() {

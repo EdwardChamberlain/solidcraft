@@ -26,6 +26,12 @@ pub const BUTTON_WIDTH: f32 = 46.0;
 pub const WIDTH: f32 = 3.0 * BUTTON_WIDTH;
 /// Room for the macOS traffic lights at the bar's left end.
 pub const TRAFFIC_LIGHTS: f32 = 76.0;
+/// The space the application bar keeps free at its left end: the macOS traffic lights float over
+/// the bar, except in full screen, where they are hidden and the room would only be a gap.
+pub fn leading_space(integrated_titlebar: bool, fullscreen: bool) -> f32 {
+    if integrated_titlebar && !fullscreen { TRAFFIC_LIGHTS } else { 0.0 }
+}
+
 /// Windows' resize border at 100 % (96 DPI): `SM_CXSIZEFRAME` + `SM_CXPADDEDBORDER`, 4 + 4 px.
 pub const RESIZE_BORDER_AT_96_DPI: f32 = 8.0;
 /// The Close button's hover colour (as on Windows).
@@ -206,6 +212,14 @@ pub fn resize_zones(ui: &mut Ui) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_traffic_light_room_is_kept_only_where_the_lights_are() {
+        use super::*;
+        assert_eq!(leading_space(true, false), TRAFFIC_LIGHTS, "a macOS window keeps room for them");
+        assert_eq!(leading_space(true, true), 0.0, "full screen hides them, so no gap");
+        assert_eq!(leading_space(false, false), 0.0, "other platforms have none");
+    }
+
     use super::*;
     use egui::{Event, Pos2, RawInput, ViewportId};
     use solidcraft_engine::Session;

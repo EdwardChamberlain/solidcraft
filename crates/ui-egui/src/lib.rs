@@ -40,6 +40,7 @@ pub mod dialogs_parts;
 pub mod dialogs_plastic;
 pub mod dialogs_revolve;
 pub mod dialogs_save_mesh;
+pub mod dialogs_selectors;
 pub mod dialogs_sheet;
 pub mod dialogs_specify;
 pub mod dialogs_surface;
@@ -156,6 +157,8 @@ pub mod select_other;
 pub mod selection;
 #[cfg(test)]
 mod selection_bar_tests;
+#[cfg(test)]
+mod selector_dialog_tests;
 pub mod shell;
 #[cfg(test)]
 mod shell_face_sketch_ui_tests;

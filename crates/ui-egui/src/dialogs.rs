@@ -797,6 +797,10 @@ impl Dialog {
         {
             inp.items = default_profiles(s);
         }
+        // Advanced: the plane of a mirror or a draft is a selector row.
+        if matches!(id, "solid.mirror" | "solid.draft") && app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced {
+            crate::specifier::convert_input(app, &mut d, 1, crate::specifier::Specifier::new(crate::specifier::Class::Plane, 0));
+        }
         // Advanced: a revolve's axis is a vector, with a point on it.
         if id == "solid.revolve" && app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced {
             use crate::specifier::{Class, Specifier, add};
@@ -1415,7 +1419,7 @@ fn pt(v: Vec3) -> Value {
 }
 
 /// A plane input as a command parameter: an origin/construction plane name or a face plane.
-fn plane_value(s: &Session, sel: Option<&Sel>) -> Option<Value> {
+pub(crate) fn plane_value(s: &Session, sel: Option<&Sel>) -> Option<Value> {
     match sel? {
         Sel::Plane { name } => Some(json!(name)),
         Sel::Face { body, index, point } => {
@@ -1718,6 +1722,32 @@ fn objects_label(accept: Accept) -> &'static str {
 
 fn is_pattern(k: &Kind) -> bool {
     matches!(k, Kind::PatternRect { .. } | Kind::PatternCirc { .. } | Kind::PathPattern { .. } | Kind::Mirror)
+}
+
+/// Does the Advanced dialog have the generic Selection and Settings groups: its inputs, then its
+/// values, neither of which has a layout of its own?
+fn grouped_kind(d: &Dialog) -> bool {
+    match &d.kind {
+        Kind::PatternRect { .. } => !d.inputs.first().is_some_and(|i| i.accept == selection::FEATURES) && d.specs.is_empty(),
+        Kind::Shell { .. }
+        | Kind::Rib { .. }
+        | Kind::Emboss { .. }
+        | Kind::Align { .. }
+        | Kind::Pipe { .. }
+        | Kind::Stock { .. }
+        | Kind::Scale { .. }
+        | Kind::OffsetFaces { .. }
+        | Kind::Thread { .. }
+        | Kind::Material { .. }
+        | Kind::PathPattern { .. }
+        | Kind::PatternCirc { .. }
+        | Kind::Loft { .. }
+        | Kind::Sweep { .. }
+        | Kind::Combine { .. }
+        | Kind::Section { .. }
+        | Kind::BoundaryFill { .. } => true,
+        _ => false,
+    }
 }
 
 /// The Object Type row of a pattern: bodies (picked in the view) or features (picked in the
@@ -2528,18 +2558,30 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     ui.label(tr("dialog.selection_guidance"));
                     ui.end_row();
                 }
+                // The Advanced dialogs without a layout of their own: a Selection and a Settings group.
+                let grouped = advanced && grouped_kind(&d);
+                let mut settings_open = true;
                 if matches!(d.kind, Kind::Specify { .. }) {
                     enter |= crate::specifier::sub_rows(app, &mut d, ui);
                 } else if crate::specifier::is_sketch(&d) {
                     enter |= sketch_specifier_rows(app, &mut d, ui);
                 } else if advanced && matches!(d.kind, Kind::Extrude { .. }) && !d.specs.is_empty() {
                     enter |= crate::dialogs_extrude::rows(app, &mut d, ui);
+                } else if crate::dialogs_selectors::applies(app, &d) {
+                    enter |= crate::dialogs_selectors::rows(app, &mut d, ui);
                 } else if advanced && matches!(d.kind, Kind::Revolve { .. }) && !d.specs.is_empty() {
                     enter |= crate::dialogs_revolve::rows(app, &mut d, ui);
+                } else if grouped {
+                    // What to pick, then the values: two groups, as the dialogs with their own layout have.
+                    if section(ui, "selection", "Selection", true) {
+                        input_rows(&mut d, ui, &app.session);
+                    }
+                    settings_open = section(ui, "settings", "Settings", true);
                 } else {
                     input_rows(&mut d, ui, &app.session);
                 }
                 match &mut d.kind {
+                    _ if grouped && !settings_open => {}
                     Kind::Sketch => {
                         if d.error.is_some()
                             && let Some(selection @ Sel::Face { .. }) = d.inputs.first().and_then(|i| i.items.first())
@@ -2566,6 +2608,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     }
                     Kind::Extrude { .. } | Kind::Revolve { .. } if advanced && !d.specs.is_empty() => {}
                     Kind::Specify { .. } => {}
+                    Kind::Mirror | Kind::Draft { .. } if advanced && !d.specs.is_empty() => {}
                     Kind::Extrude {
                         distance,
                         direction,
@@ -4026,6 +4069,16 @@ pub(crate) fn report_title(d: &Dialog) -> String {
     title(&d.kind).to_string()
 }
 
+/// A feature whose plane the dialog makes: the commands that make the plane, then the feature. An
+/// edit rebuilds one feature in place, so it cannot also make a plane.
+fn with_made_plane(d: &Dialog, mut prefix: Vec<(String, Value)>, cmd: &str, params: Value) -> Result<Vec<(String, Value)>, String> {
+    if d.editing.is_some() {
+        return Err("a plane made here cannot edit a feature: make the plane first, then pick it".into());
+    }
+    prefix.push((cmd.to_string(), params));
+    Ok(prefix)
+}
+
 /// The commands OK runs (an edit rebuilds its feature in place); the live preview runs the same.
 pub fn apply_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, String> {
     let cmds = dialog_commands(app, d)?;
@@ -4327,16 +4380,31 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         }
         Kind::Draft { angle } => {
             need(0, "faces")?;
-            need(1, "the neutral plane")?;
-            let neutral = plane_value(s, sels(d, 1).first()).ok_or("the neutral plane must be a plane or a planar face")?;
-            ("solid.draft", json!({"faces": face_points(0), "angle": angle, "neutral": neutral}))
+            let (prefix, neutral) = if d.specs.is_empty() {
+                need(1, "the neutral plane")?;
+                (Vec::new(), plane_value(s, sels(d, 1).first()).ok_or("the neutral plane must be a plane or a planar face")?)
+            } else {
+                crate::specifier::plane_value(app, d, 0)?
+            };
+            let p = json!({"faces": face_points(0), "angle": angle, "neutral": neutral});
+            if !prefix.is_empty() {
+                return with_made_plane(d, prefix, "solid.draft", p);
+            }
+            ("solid.draft", p)
         }
         Kind::Mirror => {
             need(0, "objects")?;
-            need(1, "the mirror plane")?;
-            let plane = plane_value(s, sels(d, 1).first()).ok_or("the mirror plane must be a plane or a planar face")?;
+            let (prefix, plane) = if d.specs.is_empty() {
+                need(1, "the mirror plane")?;
+                (Vec::new(), plane_value(s, sels(d, 1).first()).ok_or("the mirror plane must be a plane or a planar face")?)
+            } else {
+                crate::specifier::plane_value(app, d, 0)?
+            };
             let mut p = json!({"plane": plane});
             pattern_objects(s, sels(d, 0), &mut p);
+            if !prefix.is_empty() {
+                return with_made_plane(d, prefix, "solid.mirror", p);
+            }
             ("solid.mirror", p)
         }
         Kind::PatternRect { count, spacing, count2, spacing2 } => {

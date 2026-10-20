@@ -35,7 +35,7 @@ still in use.
 Dialogs keep SolidCraft's look and work the NX way: docked at the left, a **Type** row first when a
 command has several methods, numbered selection steps, collapsible groups (Extrude: Section, Direction, Limits, Offset, Draft, Boolean; Revolve: Section, Axis, Limits, Boolean; Hole: Position, Form and Dimensions, Limits; Fillet and Chamfer: Radius or Offsets, Settings), and **OK / Apply / Cancel** with **Reset**. Apply makes the
 feature and starts the next one. A middle click moves to the next pick and confirms once every
-pick is made. **Extrude** is laid out the way the feature is described: Section, a Direction (a Specify Vector: the profile normal unless one is given, with Reverse; a direction across the normal is not supported yet), Limits with a **Start** (Value, Value (Other Side), Until Selected) and an **End** (Value, Value from Start, Symmetric Value, Until Selected, Through All), and an **Offset** (None, Symmetric, Inside, Outside, Two-Sided) that is the wall "thin" is in Classic. The End **Value** is measured from the sketch plane; **Value from Start** is the length from the start, which is the command's own distance (the dialog works the one out from the other). **Pattern** and **Mirror** are the two buttons of the Pattern panel. What they repeat (**Bodies** or **Features**) and, for Pattern, the **Layout** (Linear, Circular, Along Path) are chosen in the dialog. `solid.pattern` takes a `layout` and hands the rest to the layout's own command. The dialogs have no step commentary. Dialogs that preview end with a **Preview** group: *Show result* turns the live
+pick is made. **Extrude** is laid out the way the feature is described: Section, a Direction (a Specify Vector: the profile normal unless one is given, with Reverse; a direction across the normal is not supported yet), Limits with a **Start** (Value, Value (Other Side), Until Selected) and an **End** (Value, Value from Start, Symmetric Value, Until Selected, Through All), and an **Offset** (None, Symmetric, Inside, Outside, Two-Sided) that is the wall "thin" is in Classic. The End **Value** is measured from the sketch plane; **Value from Start** is the length from the start, which is the command's own distance (the dialog works the one out from the other). **Pattern** and **Mirror** are the two buttons of the Pattern panel. What they repeat (**Bodies** or **Features**) and, for Pattern, the **Layout** (Linear, Circular, Along Path) are chosen in the dialog. `solid.pattern` takes a `layout` and hands the rest to the layout's own command. The dialogs have no step commentary. **Revolve** has the same shape: Section, an **Axis** (a Specify Vector with Reverse: a picked axis or sketch line goes as it is, so the revolve follows it; any other way, or reversed, goes as a point and a direction), Limits with a **Start** (Profile Plane, Value (Other Side)) and an **End** (Value, Symmetric Value, Until Selected), and Boolean. **Mirror** and **Draft** take their plane as a selector row (with its own Plane dialog), in groups (Mirror: Objects, Mirror Plane, Settings; Draft: Faces, Neutral Plane, Angle); a plane made in that dialog is made first, so it cannot be used while editing a feature (make it, then pick it). The other dialogs without a layout of their own (Shell, Rib, Sweep, Loft, Combine, Thread, Scale, Offset Faces, Circular and Path patterns, Section…) have a **Selection** group and a **Settings** group. Dialogs that preview end with a **Preview** group: *Show result* turns the live
 result off and on (OK still makes the feature). A To Object or From Object extent takes a vertex or
 construction point, a face or an edge (the place picked).
 
@@ -57,8 +57,8 @@ the x axis and the origin at the workpiece origin, so a sketch needs only the pl
 there is always the chance to choose a vector or an origin first. The sketch stays attached to its plane, with `sketch.create`'s `reframe`
 (`origin`, `x_dir`, `soft`) holding the direction and origin. Other dialogs take a specifier by `specifier::add`, read it with
 `specifier::plane`/`vector`/`point` and draw it with `specifier::show`; Create Sketch is the first,
-and the pickers the other dialogs have today (Mirror and Draft planes, pattern directions and axes,
-Revolve's axis) move onto them one at a time.
+and the pickers of the other dialogs (Mirror and Draft planes, Revolve's axis, Extrude's direction) have
+moved onto them; pattern directions and axes follow.
 
 **In a sketch**, the Advanced ribbon puts **Finish Sketch** first (the only finish button; finishing with auto constrain is in its drop-down), with **Reattach Sketch** beside it:
 the same Plane, Reference Direction and Sketch Origin as Create Sketch, applied to the sketch being
@@ -101,6 +101,5 @@ is built and what is not yet.
   linking to it): the context is drawn but is not pickable.
 - A shared evaluation between a part open in a tab and the same part linked in an assembly.
 - Mates between faces of different parts (assemblies use joints).
-- Groups for the remaining dialogs (Extrude, Revolve, Hole and the blends have them), and a Specify Point that also takes a
-  sketch point (it takes a vertex or construction point, a face or an edge).
+- The linear pattern's direction pickers, the circular pattern's axis and Section's plane are still plain inputs (the feature pattern's own layout and the commands' parameters need more than the selector rows give), and Specify Point does not take a sketch point.
 - Drawings and direct face editing are out of scope for this approach.

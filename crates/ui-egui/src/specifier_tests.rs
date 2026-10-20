@@ -403,3 +403,23 @@ fn the_reverse_button_beside_a_vector_reverses_it() {
     ok(&mut h);
     assert!(near(sketch_plane(&h).x, -Vec3::X), "the x axis, reversed: {:?}", sketch_plane(&h));
 }
+
+/// Looking straight at the sketch, no plane of the model can be picked (they are edge-on or
+/// behind it): Reattach turns the view away, and backing out turns it back.
+#[test]
+fn reattach_sketch_turns_the_view_so_planes_can_be_picked_and_cancel_turns_it_back() {
+    let mut h = advanced();
+    h.app.run("sketch.create", json!({"plane":"XY","name":"Base"})).unwrap();
+    h.app.run("sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[10,5]})).unwrap();
+    crate::dialogs::look_at_sketch_again(&mut h.app);
+    h.frames(30);
+    let straight = |h: &Harness| h.app.cam.pitch.abs() > 1.5;
+    assert!(straight(&h), "looking at the sketch: pitch {}", h.app.cam.pitch);
+    h.app.start("sketch.reattach");
+    h.frames(60);
+    assert!(!straight(&h), "turned from the sketch: pitch {}", h.app.cam.pitch);
+    // Esc/Cancel: back to facing the sketch.
+    crate::dialogs::cancel(&mut h.app);
+    h.frames(60);
+    assert!(straight(&h), "back at the sketch: pitch {}", h.app.cam.pitch);
+}

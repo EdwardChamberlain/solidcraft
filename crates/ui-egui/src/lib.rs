@@ -946,6 +946,9 @@ impl SolveApp {
                 let _ = self.session.execute("select.clear", &json!({}));
             }
             self.dialog = Some(d);
+            if id == "sketch.reattach" {
+                dialogs::turn_from_sketch(self);
+            }
             return;
         }
         // Undo and redo can recompute much of the history: off the window thread when slow.

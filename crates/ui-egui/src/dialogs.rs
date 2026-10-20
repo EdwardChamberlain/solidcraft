@@ -3572,6 +3572,10 @@ pub fn cancel(app: &mut SolveApp) {
         return;
     }
     app.dialog_stack.clear();
+    // Reattach Sketch turned the view from the sketch; backing out turns it back.
+    if app.dialog.as_ref().is_some_and(|d| d.origin.as_deref() == Some("sketch.reattach")) && app.session.active_sketch.is_some() {
+        look_at_sketch_again(app);
+    }
     if let Some(mut d) = app.dialog.take() {
         crate::dialogs_motion::closed(app, &mut d, false);
         if let Kind::Text(k) = &mut d.kind {
@@ -3976,6 +3980,13 @@ pub fn look_at_sketch(app: &mut SolveApp) {
 
 /// Look At asked for by the user (Ctrl+8, the Look At buttons): like [`look_at_sketch`], and
 /// from the sketch's other side when the view already faces it (#1886).
+/// Reattach Sketch turns the view away from the sketch's plane: looking straight at it, the origin
+/// planes (and any plane of the model) are edge-on or behind the sketch and cannot be picked.
+pub fn turn_from_sketch(app: &mut SolveApp) {
+    let to = app.cam.looking_from(Vec3::new(1.0, -1.0, 1.0));
+    app.animate_to(to);
+}
+
 pub fn look_at_sketch_again(app: &mut SolveApp) {
     look_at_sketch_from(app, true);
 }

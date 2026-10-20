@@ -19,6 +19,15 @@ const REF: &str =
     "{face|edge|vertex|point: [x,y,z]} | {plane: XY|name|{origin, normal}} | {axis: X|Y|Z|name} | {construct_point: name} | {sketch, point|curve}";
 
 pub static COMMANDS: &[CommandSpec] = &[
+    CommandSpec::new("datum.plane", "Datum Plane", datum_plane)
+        .icon("plane")
+        .params("type: offset|at_angle|bisector|three_points|two_edges|tangent|along_path|perpendicular; then the parameters of that type's command (construct.plane.offset, construct.plane.at_angle, construct.plane.midplane, …). One datum plane, whichever way it is defined"),
+    CommandSpec::new("datum.axis", "Datum Axis", datum_axis)
+        .icon("axis")
+        .params("type: cylinder|normal_to_face|two_planes|two_points|edge; then the parameters of that type's command (construct.axis.*). One datum axis, whichever way it is defined"),
+    CommandSpec::new("datum.point", "Datum Point", datum_point)
+        .icon("point")
+        .params("type: vertex|two_edges|three_planes|center|edge_plane|along_path; then the parameters of that type's command (construct.point.*). One datum point, whichever way it is defined"),
     CommandSpec::new("construct.axis.through_cylinder", "Axis Through Cylinder/Cone/Torus", axis_face)
         .at("SOLID", "CONSTRUCT")
         .icon("axis_through_cylinder")
@@ -257,4 +266,120 @@ fn plane_perpendicular(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "construct.plane.perpendicular";
     let (base, line) = (geo(s, p.get("plane"), cmd, "plane")?, geo(s, p.get("line"), cmd, "line")?);
     plane(s, p, PlaneRef::Perpendicular { plane: Box::new(base), line: Box::new(line) })
+}
+
+/// `datum.plane`, `datum.axis`, `datum.point`: one datum of a kind, the way it is defined being the
+/// `type` parameter; the rest goes to that way's own command.
+fn datum(s: &mut Session, p: &Value, cmd: &str, kind: &str, types: &[(&str, &str)]) -> Result<Value> {
+    let ty = str_(p, "type").ok_or_else(|| bad(cmd, format!("`type` is required: {}", types.iter().map(|t| t.0).collect::<Vec<_>>().join(", "))))?;
+    let (_, target) = types
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(ty))
+        .ok_or_else(|| bad(cmd, format!("unknown {kind} type `{ty}` ({})", types.iter().map(|t| t.0).collect::<Vec<_>>().join(", "))))?;
+    let mut q = p.clone();
+    if let Value::Object(m) = &mut q {
+        m.remove("type");
+    }
+    super::find_command(target).ok_or_else(|| bad(cmd, target.to_string()))?.run_nested(s, &q)
+}
+
+fn datum_plane(s: &mut Session, p: &Value) -> Result<Value> {
+    datum(
+        s,
+        p,
+        "datum.plane",
+        "plane",
+        &[
+            ("offset", "construct.plane.offset"),
+            ("at_angle", "construct.plane.at_angle"),
+            ("bisector", "construct.plane.midplane"),
+            ("midplane", "construct.plane.midplane"),
+            ("three_points", "construct.plane.three_points"),
+            ("two_edges", "construct.plane.two_edges"),
+            ("tangent", "construct.plane.tangent"),
+            ("along_path", "construct.plane.along_path"),
+            ("perpendicular", "construct.plane.perpendicular"),
+        ],
+    )
+}
+
+fn datum_axis(s: &mut Session, p: &Value) -> Result<Value> {
+    datum(
+        s,
+        p,
+        "datum.axis",
+        "axis",
+        &[
+            ("cylinder", "construct.axis.through_cylinder"),
+            ("normal_to_face", "construct.axis.normal_to_face"),
+            ("two_planes", "construct.axis.two_planes"),
+            ("two_points", "construct.axis.two_points"),
+            ("edge", "construct.axis.edge"),
+        ],
+    )
+}
+
+fn datum_point(s: &mut Session, p: &Value) -> Result<Value> {
+    datum(
+        s,
+        p,
+        "datum.point",
+        "point",
+        &[
+            ("vertex", "construct.point.vertex"),
+            ("two_edges", "construct.point.two_edges"),
+            ("three_planes", "construct.point.three_planes"),
+            ("center", "construct.point.center"),
+            ("edge_plane", "construct.point.edge_plane"),
+            ("along_path", "construct.point.along_path"),
+        ],
+    )
+}
+
+#[cfg(test)]
+mod datum_tests {
+    use serde_json::{Value, json};
+
+    use crate::Session;
+
+    fn run(s: &mut Session, id: &str, p: Value) -> Value {
+        match s.execute(id, &p) {
+            Ok(v) => v,
+            Err(e) => panic!("{id} {p}: {e}"),
+        }
+    }
+
+    #[test]
+    fn a_datum_is_made_the_way_its_type_says() {
+        let mut s = Session::default();
+        run(&mut s, "datum.plane", json!({"type":"offset","base":"XY","offset":"12 mm","name":"Above"}));
+        run(&mut s, "datum.plane", json!({"type":"bisector","a":{"plane":"XZ"},"b":{"plane":"YZ"},"name":"Between"}));
+        run(&mut s, "datum.axis", json!({"type":"two_points","a":{"point":[0,0,0]},"b":{"point":[0,0,5]},"name":"Up"}));
+        run(&mut s, "datum.point", json!({"type":"vertex","point":{"point":[1,2,3]},"name":"Spot"}));
+        let names: Vec<&str> = s.doc.features.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, ["Above", "Between", "Up", "Spot"]);
+        let direct = {
+            let mut d = Session::default();
+            run(&mut d, "construct.plane.offset", json!({"base":"XY","offset":"12 mm","name":"Above"}));
+            d.doc.to_json()
+        };
+        let mut one = Session::default();
+        run(&mut one, "datum.plane", json!({"type":"offset","base":"XY","offset":"12 mm","name":"Above"}));
+        assert_eq!(one.doc.to_json(), direct, "the same feature as the command of its type");
+    }
+
+    #[test]
+    fn a_missing_or_unknown_type_is_refused_with_the_choices() {
+        let mut s = Session::default();
+        for (cmd, p, word) in [
+            ("datum.plane", json!({"base":"XY"}), "`type` is required"),
+            ("datum.plane", json!({"type":"spiral"}), "unknown plane type"),
+            ("datum.axis", json!({"type":"x"}), "unknown axis type"),
+            ("datum.point", json!({"type":3}), "`type` is required"),
+        ] {
+            let e = s.execute(cmd, &p).unwrap_err().to_string();
+            assert!(e.contains(word), "{cmd}: {e}");
+        }
+        assert!(s.doc.features.is_empty());
+    }
 }

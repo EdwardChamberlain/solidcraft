@@ -66,9 +66,12 @@ fn picking_the_plane_waits_for_ok_so_the_direction_and_origin_can_still_be_chose
     let mut h = advanced();
     open(&mut h);
     let d = h.app.dialog.as_ref().unwrap();
-    assert_eq!(d.specs[1].id(), "axis", "the direction starts at the x axis");
-    assert_eq!(d.specs[2].id(), "origin", "the origin starts at the workpiece origin");
-    assert_eq!(d.inputs.len(), 1, "only the plane has anything to pick");
+    assert_eq!(d.specs[1].fallback, crate::specifier::Fallback::XAxis, "the axis stands for the x axis until one is picked");
+    assert_eq!(d.specs[2].fallback, crate::specifier::Fallback::WorkpieceOrigin, "the point for the workpiece origin");
+    assert_eq!(d.inputs.len(), 3, "three selectors: plane, axis, point");
+    assert_eq!(d.inputs[1].placeholder, Some("X axis"));
+    assert_eq!(d.inputs[2].placeholder, Some("Workpiece origin"));
+    assert!(crate::scenario::handle_at("dialog:specify:sketch_plane").is_some(), "each selector has its icon");
     pick(&mut h, 0, plane("XY"));
     h.frames(8);
     assert!(h.app.session.active_sketch.is_none() && h.app.dialog.is_some(), "the pick alone does not start the sketch");
@@ -239,7 +242,7 @@ fn changing_the_type_keeps_the_picks_the_new_type_can_use() {
     let d = h.app.dialog.as_ref().unwrap();
     assert_eq!(d.inputs[0].items, vec![plane("XY")], "the plane is still picked");
     assert_eq!(d.specs[0].count, 1);
-    assert_eq!(d.inputs.len(), 1, "only the plane has an input: the direction and origin defaults need no pick");
+    assert_eq!(d.inputs.len(), 3, "the plane's input, and the defaults' selectors");
 }
 
 #[test]
@@ -288,4 +291,49 @@ fn reattach_sketch_takes_a_datum_plane_and_nothing_without_a_sketch() {
     pick(&mut h, 0, plane("Datum A"));
     ok(&mut h);
     assert!(near(sketch_plane(&h).origin, Vec3::new(0.0, 0.0, 15.0)), "{:?}", sketch_plane(&h));
+}
+
+#[test]
+fn the_icon_beside_a_selector_opens_its_type_and_the_selector_infers_without_it() {
+    let mut h = advanced();
+    open(&mut h);
+    assert!(h.widget("Type").is_none(), "the type is not in the way until asked for");
+    h.step(&json!({"click":{"handle":"dialog:specify:sketch_plane"}})).unwrap();
+    h.frames(3);
+    assert!(h.app.dialog.as_ref().unwrap().specs[0].open);
+    assert!(h.widget("Type").is_some(), "the plane's types are listed");
+    h.step(&json!({"click":{"handle":"dialog:Type"}})).unwrap();
+    h.step(&json!({"click":{"handle":"dialog:Type:Offset from Plane"}})).unwrap();
+    h.frames(3);
+    assert_eq!(h.app.dialog.as_ref().unwrap().specs[0].id(), "construct.plane.offset");
+    assert!(h.widget("Distance").is_some(), "what the Offset asks for is in view");
+    // Inferred: with the type left alone, picking a plane is enough.
+    let mut h = advanced();
+    open(&mut h);
+    pick(&mut h, 0, plane("XZ"));
+    ok(&mut h);
+    assert!(near(sketch_plane(&h).normal(), solidcraft_engine::geom::Plane::XZ.normal()));
+}
+
+#[test]
+fn an_axis_picked_into_the_axis_selector_is_inferred() {
+    let mut h = advanced();
+    open(&mut h);
+    pick(&mut h, 0, plane("XY"));
+    pick(&mut h, 1, Sel::Axis { name: "Y".into() });
+    ok(&mut h);
+    assert!(near(sketch_plane(&h).x, Vec3::Y), "{:?}", sketch_plane(&h));
+}
+
+#[test]
+fn the_reverse_button_beside_a_vector_reverses_it() {
+    let mut h = advanced();
+    open(&mut h);
+    assert!(!h.app.dialog.as_ref().unwrap().specs[1].reverse);
+    h.step(&json!({"click":{"handle":"dialog:reverse:sketch_direction"}})).unwrap();
+    h.frames(3);
+    assert!(h.app.dialog.as_ref().unwrap().specs[1].reverse);
+    pick(&mut h, 0, plane("XY"));
+    ok(&mut h);
+    assert!(near(sketch_plane(&h).x, -Vec3::X), "the x axis, reversed: {:?}", sketch_plane(&h));
 }

@@ -476,6 +476,9 @@ impl Dialog {
         let s = &app.session;
         let has_bodies = !s.world_state().bodies.is_empty();
         let mut d = match id {
+            "datum.plane" => crate::dialogs_datum::inferred(crate::dialogs_datum::Class::Plane),
+            "datum.axis" => crate::dialogs_datum::inferred(crate::dialogs_datum::Class::Axis),
+            "datum.point" => crate::dialogs_datum::inferred(crate::dialogs_datum::Class::Point),
             "sketch.reattach" => {
                 // The sketch being edited, or the one selected in the tree; its plane, direction
                 // and origin are the specifiers', left unspecified until one is given.
@@ -489,8 +492,8 @@ impl Dialog {
                 d.extra.insert("sketch".into(), json!(sketch));
                 use crate::specifier::{Class, Specifier, add};
                 add(app, &mut d, Specifier::new(Class::Plane, 0));
-                add(app, &mut d, Specifier::new(Class::Vector, 0));
-                add(app, &mut d, Specifier::new(Class::Point, 0));
+                add(app, &mut d, Specifier::new(Class::Vector, 0).optional());
+                add(app, &mut d, Specifier::new(Class::Point, 0).optional());
                 d
             }
             "sketch.create" if app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced => {
@@ -499,9 +502,10 @@ impl Dialog {
                 use crate::specifier::{Class, Specifier, add};
                 // Only the plane needs a click: the direction defaults to the x axis and the origin
                 // to the workpiece origin.
+                use crate::specifier::Fallback;
                 add(app, &mut d, Specifier::new(Class::Plane, 0));
-                add(app, &mut d, Specifier::with_id(Class::Vector, "axis"));
-                add(app, &mut d, Specifier::with_id(Class::Point, "origin"));
+                add(app, &mut d, Specifier::new(Class::Vector, 0).with_fallback(Fallback::XAxis));
+                add(app, &mut d, Specifier::new(Class::Point, 0).with_fallback(Fallback::WorkpieceOrigin));
                 d
             }
             "sketch.create" => Dialog::new(Kind::Sketch, vec![SelInput::new("Plane", PLANES | PLANAR_FACES, false)]),
@@ -796,7 +800,7 @@ impl Dialog {
         // Advanced: the extrude's direction is a vector (the profile normal unless one is given).
         if id == "solid.extrude" && app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced {
             use crate::specifier::{Class, Specifier, add};
-            add(app, &mut d, Specifier::new(Class::Vector, 0).optional());
+            add(app, &mut d, Specifier::new(Class::Vector, 0).with_fallback(crate::specifier::Fallback::ProfileNormal));
         }
         d.sync_thread(s);
         d.advance();
@@ -1475,7 +1479,7 @@ thread_local! {
     static ROW: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
 }
 
-fn tr(text: &str) -> &str {
+pub(crate) fn tr(text: &str) -> &str {
     crate::i18n::tr_label(text)
 }
 
@@ -1830,6 +1834,19 @@ fn feature_pattern_reference_key(d: &Dialog, index: usize) -> Option<&'static st
 }
 
 pub(crate) fn input_rows_range(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, range: std::ops::Range<usize>) {
+    input_rows_range_with(d, ui, s, range, None, &mut |_| {});
+}
+
+/// The rows of the inputs in `range`, the first labelled `label` instead of its own when given,
+/// with `trailing` drawn after each row's chip (a specifier's icon).
+pub(crate) fn input_rows_range_with(
+    d: &mut Dialog,
+    ui: &mut egui::Ui,
+    s: &Session,
+    range: std::ops::Range<usize>,
+    label: Option<&str>,
+    trailing: &mut dyn FnMut(&mut egui::Ui),
+) {
     // Edit Text shows its Path input among its own rows.
     if matches!(d.kind, Kind::Text(_)) {
         return;
@@ -1839,7 +1856,7 @@ pub(crate) fn input_rows_range(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, r
     let mut activate: Option<usize> = None;
     for (i, inp) in d.inputs.iter().enumerate().skip(range.start).take(range.end.saturating_sub(range.start)) {
         let stored_reference = feature_pattern_reference_key(d, i).and_then(|key| d.extra.get(key)).filter(|_| inp.items.is_empty());
-        row_label(ui, inp.label);
+        row_label(ui, label.unwrap_or(inp.label));
         ui.horizontal(|ui| {
             let active = i == d.active;
             // A chip: "↖ Select" (outlined) while empty, "N selected" (filled) once picked.
@@ -1855,7 +1872,10 @@ pub(crate) fn input_rows_range(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, r
                 })
                 .color(Color32::WHITE)
             } else {
-                RichText::new(crate::i18n::tr("dialog.select")).color(t.text)
+                match inp.placeholder {
+                    Some(text) => RichText::new(tr(text)).color(t.text_dim),
+                    None => RichText::new(crate::i18n::tr("dialog.select")).color(t.text),
+                }
             };
             let stroke = if active { Stroke::new(1.5, t.accent) } else { Stroke::new(1.0, t.dialog_border.gamma_multiply(1.6)) };
             // Not in the Tab order: Tab moves between values.
@@ -1892,6 +1912,7 @@ pub(crate) fn input_rows_range(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, r
                     clear = Some(i);
                 }
             }
+            trailing(ui);
         });
         ui.end_row();
     }
@@ -3752,8 +3773,8 @@ pub(crate) fn change_param(app: &mut SolveApp, name: &str, expression: &str) -> 
 fn sketch_specifier_rows(app: &SolveApp, d: &mut Dialog, ui: &mut egui::Ui) -> bool {
     use crate::specifier::show;
     let mut enter = show(app, d, ui, 0, "Plane", "sketch_plane");
-    enter |= show(app, d, ui, 1, "Reference Direction", "sketch_direction");
-    enter |= show(app, d, ui, 2, "Sketch Origin", "sketch_origin");
+    enter |= show(app, d, ui, 1, "Axis", "sketch_direction");
+    enter |= show(app, d, ui, 2, "Point", "sketch_origin");
     enter
 }
 
@@ -3780,7 +3801,8 @@ pub(crate) fn sketch_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String,
     if let Some(v) = direction {
         reframe.insert("x_dir".into(), pt(v));
         // A coordinate axis that happens to be square to the plane leaves the plane's own x.
-        if d.specs.get(1).is_some_and(|s| s.id() == "axis") {
+        let defaulted = d.specs.get(1).is_some_and(|s| s.id() == "inferred" && !d.inputs.iter().any(|i| i.owner == 2 && !i.items.is_empty()));
+        if defaulted || d.specs.get(1).is_some_and(|s| s.id() == "axis") {
             reframe.insert("soft".into(), json!(true));
         }
     }

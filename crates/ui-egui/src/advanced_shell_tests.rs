@@ -19,10 +19,13 @@ fn every_advanced_ribbon_command_exists_and_every_tab_has_panels() {
     for id in ["sketch.create", "solid.extrude", "solid.revolve", "solid.fillet", "solid.thread"] {
         assert!(feature.iter().any(|c| c.id == id), "HOME/FEATURE lacks {id}");
     }
-    // The datum panel offers every construct method the engine has.
+    // The datum panel is a plane, an axis and a point; every construct method the engine has is in
+    // one of their drop-downs.
     let datum = &panel_lists("HOME")[1].1;
-    let engine = solidcraft_engine::command_specs().iter().filter(|c| c.id.starts_with("construct.")).count();
-    assert_eq!(datum.len(), engine, "HOME/DATUM and the engine's construct.* commands differ");
+    assert_eq!(datum.iter().map(|c| c.id).collect::<Vec<_>>(), ["datum.plane", "datum.axis", "datum.point"]);
+    for c in solidcraft_engine::command_specs().iter().filter(|c| c.id.starts_with("construct.")) {
+        assert!(crate::sketch_families::DATUM_FAMILIES.iter().any(|f| f.commands.contains(&c.id)), "{} is in no datum drop-down", c.id);
+    }
 }
 
 #[test]
@@ -341,6 +344,9 @@ fn the_pattern_panel_offers_pattern_feature_pattern_geometry_and_mirror() {
     for button in ["Pattern Feature", "Pattern Geometry", "Mirror"] {
         assert!(h.widget(button).is_some(), "{button} is a button on the Home ribbon");
     }
+    for other in ["Rectangular Pattern", "Circular Pattern", "Pattern on Path"] {
+        assert!(h.widget(other).is_none(), "{other} is in the drop-down, not on the ribbon");
+    }
 }
 
 #[test]
@@ -401,4 +407,36 @@ fn the_sketch_ribbon_has_one_finish_button_and_the_others_are_in_its_drop_down()
     // Shown on the toolbar: Finish Sketch and Reattach Sketch only.
     assert!(h.widget("Finish with AutoConstrain").is_none(), "not a button");
     assert!(rect_of("panel:SKETCH:FINISH SKETCH").is_some_and(|r| r.width() < 130.0), "two buttons wide");
+}
+
+#[test]
+fn the_datum_panel_has_a_button_each_for_plane_axis_and_point_with_the_ways_in_their_drop_downs() {
+    let mut h = advanced();
+    h.frames(6);
+    for label in ["Datum Plane", "Datum Axis", "Datum Point"] {
+        assert!(h.widget(label).is_some(), "{label} is a button");
+    }
+    for family in ["Plane", "Axis", "Point"] {
+        assert!(crate::scenario::handle_at(&format!("family:{family}")).is_some(), "{family} has its drop-down arrow");
+    }
+    assert!(h.widget("Offset Plane").is_none() && h.widget("Midplane").is_none(), "the ways are not on the ribbon");
+    // The button opens the one dialog, at Inferred; its Type lists the ways.
+    h.step(&json!({"widget":"Datum Point"})).unwrap();
+    h.frames(4);
+    let d = h.app.dialog.as_ref().expect("the Datum Point dialog");
+    assert!(matches!(d.kind, crate::dialogs::Kind::DatumInferred { .. }));
+    assert_eq!(d.origin.as_deref(), Some("datum.point"));
+}
+
+#[test]
+fn a_datum_drop_down_starts_the_dialog_at_that_way() {
+    let mut h = advanced();
+    h.frames(6);
+    h.step(&json!({"click":{"handle":"family:Plane"}})).unwrap();
+    h.frames(3);
+    assert!(h.widget("Midplane").is_some(), "the Plane drop-down lists its ways");
+    h.step(&json!({"widget":"Midplane"})).unwrap();
+    h.frames(4);
+    let d = h.app.dialog.as_ref().expect("a dialog");
+    assert!(matches!(d.kind, crate::dialogs::Kind::Midplane), "{:?}", d.kind);
 }

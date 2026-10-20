@@ -31,6 +31,32 @@ pub enum Class {
     Point,
 }
 
+/// What a specifier stands for while nothing is picked and its Type is Inferred: the dialog's
+/// default, shown in the empty selector.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Fallback {
+    /// Nothing: the dialog wants a pick.
+    #[default]
+    Nothing,
+    /// The x axis (a sketch's reference direction).
+    XAxis,
+    /// The workpiece origin.
+    WorkpieceOrigin,
+    /// The way the profile faces (an extrude's direction); no direction of its own.
+    ProfileNormal,
+}
+
+impl Fallback {
+    fn text(self) -> Option<&'static str> {
+        match self {
+            Fallback::Nothing => None,
+            Fallback::XAxis => Some("X axis"),
+            Fallback::WorkpieceOrigin => Some("Workpiece origin"),
+            Fallback::ProfileNormal => Some("Profile normal"),
+        }
+    }
+}
+
 /// One specifier of a dialog.
 #[derive(Clone, Debug)]
 pub struct Specifier {
@@ -45,6 +71,10 @@ pub struct Specifier {
     pub values: Vec<String>,
     /// Nothing picked is an answer (the dialog has a default): its inputs are not required.
     pub optional: bool,
+    /// What it stands for while nothing is picked.
+    pub fallback: Fallback,
+    /// The panel of its Type and the rest of its inputs is open (the icon beside the selector).
+    pub open: bool,
     /// What the dialog last mirrored of this specifier (a dialog that keeps its own copy of
     /// Reverse tells its own changes from the specifier's with it).
     pub memo: Option<bool>,
@@ -97,6 +127,11 @@ fn selection_points() -> Accept {
     VERTICES | POINTS | SKETCH_POINTS
 }
 
+fn placeholder(mut input: SelInput, fallback: Fallback) -> SelInput {
+    input.placeholder = fallback.text();
+    input
+}
+
 impl Specifier {
     /// A specifier starting at `ty` (0, Inferred, unless the dialog's default is another way);
     /// its inputs are made by [`Specifier::inputs`] and added to the dialog by the caller.
@@ -105,7 +140,7 @@ impl Specifier {
             Class::Point => vec!["0 mm".into(), "0 mm".into(), "0 mm".into()],
             _ => vec!["X".into()],
         };
-        Specifier { class, ty, count: 0, reverse: false, values, optional: false, memo: None, inner: None }
+        Specifier { class, ty, count: 0, reverse: false, values, optional: false, fallback: Fallback::Nothing, open: false, memo: None, inner: None }
     }
 
     /// A specifier starting at the way with this id (Inferred when there is none).
@@ -115,6 +150,13 @@ impl Specifier {
 
     /// The same specifier with its default being no pick at all.
     pub fn optional(mut self) -> Specifier {
+        self.optional = true;
+        self
+    }
+
+    /// The same specifier standing for `fallback` while nothing is picked (and so optional).
+    pub fn with_fallback(mut self, fallback: Fallback) -> Specifier {
+        self.fallback = fallback;
         self.optional = true;
         self
     }
@@ -147,14 +189,14 @@ impl Specifier {
                 },
             },
             Class::Vector => match id {
-                "inferred" => vec![SelInput::new("Geometry", inferred_accept(Class::Vector), true)],
+                "inferred" => vec![placeholder(SelInput::new("Geometry", inferred_accept(Class::Vector), true), self.fallback)],
                 "edge" => vec![SelInput::new("Edge or line", AXES | EDGES, false)],
                 "normal" => vec![SelInput::new("Plane or face", PLANES | PLANAR_FACES, false)],
                 "points" => vec![SelInput::new("From", selection_points(), false), SelInput::new("To", selection_points(), false)],
                 _ => Vec::new(),
             },
             Class::Point => match id {
-                "inferred" => vec![SelInput::new("Geometry", inferred_accept(Class::Point), false)],
+                "inferred" => vec![placeholder(SelInput::new("Geometry", inferred_accept(Class::Point), false), self.fallback)],
                 "existing" => vec![SelInput::new("Point", selection_points(), false)],
                 "midpoint" => vec![SelInput::new("Edge", EDGES, false)],
                 "pick" => vec![SelInput::new("Edge or face", EDGES | FACES, false)],
@@ -242,25 +284,86 @@ pub fn choose(app: &SolveApp, d: &mut Dialog, index: usize, id: &str) -> bool {
     }
 }
 
-/// The specifier's rows in the dialog's grid: the Type, its picks, its values. `true` when Enter
-/// was pressed in a value.
+/// The specifier as a selector row: click it, then click geometry or features and what is picked is
+/// inferred; the icon beside it opens the way to say it exactly (the Type, and the rest of that
+/// way's picks and values). `true` when Enter was pressed in a value.
 pub fn show(app: &SolveApp, d: &mut Dialog, ui: &mut Ui, index: usize, title: &str, group: &str) -> bool {
     let mut enter = false;
-    if !dialogs::section(ui, group, title, true) {
+    let Some(spec) = d.specs.get(index).cloned() else { return enter };
+    let owned = indices(d, index);
+    let t = crate::theme::Tokens::get();
+    let mut toggle = false;
+    let mut reverse = spec.reverse;
+    let icon = match spec.class {
+        Class::Plane => "plane",
+        Class::Vector => "axis",
+        Class::Point => "point",
+    };
+    let mut trailing = |ui: &mut Ui| {
+        if spec.class == Class::Vector {
+            let r = ui.add(egui::Button::new("").selected(reverse).min_size(egui::vec2(26.0, 22.0)));
+            crate::icons::paint(ui.painter(), r.rect.shrink(4.0), "pattern_flip", t.icon, t.icon_fill, t.accent);
+            crate::scenario::publish_handle(&format!("dialog:reverse:{group}"), r.rect.center());
+            if r.on_hover_text(dialogs::tr("Reverse")).clicked() {
+                reverse = !reverse;
+            }
+        }
+        let r = ui.add(egui::Button::new("").selected(spec.open).min_size(egui::vec2(26.0, 22.0)));
+        crate::icons::paint(ui.painter(), r.rect.shrink(3.0), icon, t.icon, t.icon_fill, t.accent);
+        crate::scenario::publish_handle(&format!("dialog:specify:{group}"), r.rect.center());
+        if r.on_hover_text(dialogs::tr(title)).clicked() {
+            toggle = true;
+        }
+    };
+    if let Some(&first) = owned.first() {
+        dialogs::input_rows_range_with(d, ui, &app.session, first..first + 1, Some(title), &mut trailing);
+    } else {
+        // A way that needs no pick: what it stands for, where the pick would be.
+        dialogs::row_label(ui, title);
+        ui.horizontal(|ui| {
+            let text = match (spec.class, spec.id()) {
+                (Class::Vector, "axis") => format!("{} axis", spec.values.first().map_or("X", String::as_str)),
+                (Class::Point, "coords") => spec.values.join(", "),
+                (Class::Point, "origin") => "Workpiece origin".to_string(),
+                _ => String::new(),
+            };
+            ui.add_enabled(false, egui::Button::new(text).min_size(egui::vec2(0.0, 22.0)));
+            trailing(ui);
+        });
+        ui.end_row();
+    }
+    if let Some(slot) = d.specs.get_mut(index) {
+        slot.reverse = reverse;
+        if toggle {
+            slot.open = !slot.open;
+        }
+    }
+    if let Some(p) = crate::scenario::handle_at(&format!("dialog:specify:{group}")) {
+        crate::scenario::publish_handle(&format!("dialog:group:{group}"), p);
+    }
+    // Its panel: the Type, then what that Type asks for beyond the selector. Open while a Type
+    // other than Inferred is chosen, so what it needs is in view.
+    let spec = match d.specs.get(index).cloned() {
+        Some(spec) => spec,
+        None => return enter,
+    };
+    if !(spec.open || spec.ty != 0) {
         return enter;
     }
-    let Some(spec) = d.specs.get(index).cloned() else { return enter };
-    let all = choices(spec.class);
-    let labels: Vec<&str> = all.iter().map(|c| c.1).collect();
-    let mut ty = spec.ty;
-    dialogs::row_label(ui, "Type");
-    dialogs::combo(ui, &format!("specifier_{group}"), &labels, &mut ty);
-    ui.end_row();
-    if ty != spec.ty {
-        set_type(app, d, index, ty);
+    if spec.open {
+        let all = choices(spec.class);
+        let labels: Vec<&str> = all.iter().map(|c| c.1).collect();
+        let mut ty = spec.ty;
+        dialogs::row_label(ui, "Type");
+        dialogs::combo(ui, &format!("specifier_{group}"), &labels, &mut ty);
+        ui.end_row();
+        if ty != spec.ty {
+            set_type(app, d, index, ty);
+        }
     }
-    for k in indices(d, index) {
-        dialogs::input_rows_range(d, ui, &app.session, k..k + 1);
+    let owned = indices(d, index);
+    for k in owned.iter().skip(1) {
+        dialogs::input_rows_range(d, ui, &app.session, *k..*k + 1);
     }
     let Some(mut spec) = d.specs.get(index).cloned() else { return enter };
     match (spec.class, spec.id()) {
@@ -291,12 +394,6 @@ pub fn show(app: &SolveApp, d: &mut Dialog, ui: &mut Ui, index: usize, title: &s
             }
         }
         _ => {}
-    }
-    if spec.class == Class::Vector {
-        dialogs::row_label(ui, "Reverse");
-        let r = ui.checkbox(&mut spec.reverse, "");
-        crate::scenario::publish_handle(&format!("dialog:reverse:{group}"), r.rect.center());
-        ui.end_row();
     }
     if let Some(slot) = d.specs.get_mut(index) {
         *slot = spec;
@@ -342,6 +439,10 @@ pub fn point(app: &SolveApp, d: &Dialog, index: usize) -> Result<Option<Vec3>, S
         }
     };
     match spec.id() {
+        "inferred" if first.is_none() && spec.fallback == Fallback::WorkpieceOrigin => {
+            let m = app.session.active_component_frame();
+            Ok(Some(solidcraft_engine::doc::apply_point(&m, Vec3::ZERO)))
+        }
         "inferred" => at(first, "a point"),
         "existing" => at(first, "a point").and_then(|p| p.ok_or_else(|| "select a point first".to_string()).map(Some)),
         "midpoint" => at(first, "an edge").and_then(|p| p.ok_or_else(|| "select an edge first".to_string()).map(Some)),
@@ -387,7 +488,10 @@ pub fn vector_raw(app: &SolveApp, d: &Dialog, index: usize) -> Result<Option<Vec
             }
         }
         "inferred" => match items.as_slice() {
-            [] => None,
+            [] => match spec.fallback {
+                Fallback::XAxis => Some(Vec3::X),
+                _ => None,
+            },
             [one] => Some(direction_of(app, one).ok_or("that has no direction")?),
             [a, b] => match (point_of(app, a), point_of(app, b)) {
                 (Some(a), Some(b)) => Some((b - a).normalized().ok_or("the two points are the same")?),

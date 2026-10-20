@@ -254,6 +254,8 @@ pub struct UiState {
     pub selection_scope: selection::Scope,
     /// What picking an edge takes with it (the Advanced selection bar).
     pub selection_intent: selection::Intent,
+    /// The sketch inferences that are on (the Advanced selection bar's Snap Points; bits of `selection::SNAP_KINDS`).
+    pub snap_kinds: u8,
     /// 0: shaded with edges, 1: shaded, 2: wireframe, 3: shaded with hidden edges.
     pub visual_style: u8,
     /// A soft shadow on the ground under the model (seen from above).
@@ -286,6 +288,7 @@ impl Default for UiState {
             pick_bodies: false,
             selection_scope: Default::default(),
             selection_intent: Default::default(),
+            snap_kinds: selection::SNAPS_ALL,
             visual_style: 0,
             ground_shadow: true,
             up_axis: Default::default(),
@@ -596,7 +599,10 @@ impl SolveApp {
             "selection_intent": match self.ui.selection_intent {
                 selection::Intent::Single => "single",
                 selection::Intent::TangentChain => "tangent_chain",
+                selection::Intent::FaceEdges => "face_edges",
+                selection::Intent::Connected => "connected",
             },
+            "snap_kinds": self.ui.snap_kinds,
             "auto_project": self.session.auto_project,
             "visual_style": self.ui.visual_style,
             "browser_collapsed": self.tree.collapsed,
@@ -640,7 +646,12 @@ impl SolveApp {
         match v.get("selection_intent").and_then(Value::as_str) {
             Some("single") => self.ui.selection_intent = selection::Intent::Single,
             Some("tangent_chain") => self.ui.selection_intent = selection::Intent::TangentChain,
+            Some("face_edges") => self.ui.selection_intent = selection::Intent::FaceEdges,
+            Some("connected") => self.ui.selection_intent = selection::Intent::Connected,
             _ => {}
+        }
+        if let Some(bits) = v.get("snap_kinds").and_then(Value::as_u64).filter(|b| *b <= u64::from(selection::SNAPS_ALL)) {
+            self.ui.snap_kinds = bits as u8;
         }
         if let Some(a) = flag("auto_project") {
             self.session.auto_project = a;

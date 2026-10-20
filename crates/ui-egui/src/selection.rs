@@ -277,6 +277,31 @@ pub enum Intent {
     Single,
     /// The edges that continue it smoothly, end to end.
     TangentChain,
+    /// Every edge of the face beside it (its boundary).
+    FaceEdges,
+    /// Every edge joined to it end to end, through corners too.
+    Connected,
+}
+
+/// What the sketch tools infer while drawing, each of which the selection bar can turn off.
+pub const SNAP_KINDS: &[(&str, u8)] =
+    &[("Midpoint", 1), ("On Curve", 2), ("Tangent", 4), ("Horizontal / Vertical", 8), ("Parallel / Perpendicular / Extension", 16)];
+
+/// All the inferences on.
+pub const SNAPS_ALL: u8 = 31;
+
+thread_local! {
+    static SNAPS: std::cell::Cell<u8> = const { std::cell::Cell::new(SNAPS_ALL) };
+}
+
+/// Set the inferences that are on, for the picks that follow (the shell sets it each frame).
+pub fn set_snaps(on: u8) {
+    SNAPS.with(|c| c.set(on));
+}
+
+/// Is this kind of inference on (`SNAP_KINDS`' bit)?
+pub fn snap_on(kind: u8) -> bool {
+    SNAPS.with(std::cell::Cell::get) & kind != 0
 }
 
 thread_local! {

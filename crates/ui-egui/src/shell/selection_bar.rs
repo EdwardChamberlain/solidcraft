@@ -6,7 +6,7 @@
 
 use egui::RichText;
 
-use crate::selection::{Intent, Scope};
+use crate::selection::{Intent, SNAP_KINDS, Scope};
 use crate::theme::Tokens;
 use crate::{SolveApp, UiState, toolbar};
 
@@ -23,7 +23,12 @@ pub const FILTERS: &[(&str, bool, &[&str])] = &[
 pub const SCOPES: &[(&str, Scope)] =
     &[("Entire Design", Scope::Entire), ("Work Part Only", Scope::WorkPart), ("Work Part and Components", Scope::WorkPartAndComponents)];
 
-pub const INTENTS: &[(&str, Intent)] = &[("Single", Intent::Single), ("Tangent Chain", Intent::TangentChain)];
+pub const INTENTS: &[(&str, Intent)] = &[
+    ("Single", Intent::Single),
+    ("Tangent Chain", Intent::TangentChain),
+    ("Face Edges", Intent::FaceEdges),
+    ("Connected Curves", Intent::Connected),
+];
 
 /// The filter the UI state stands for; `None` when it is a mix of its own (Customize).
 pub fn current_filter(ui: &UiState) -> Option<usize> {
@@ -90,6 +95,21 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 });
                 crate::scenario::publish_handle("selection:intent", r.response.rect.center());
                 r.response.on_hover_text(app.tr_label("Intent"));
+                // Snap points: which inferences the sketch tools make.
+                let off = SNAP_KINDS.iter().filter(|(_, bit)| app.ui.snap_kinds & bit == 0).count();
+                let label = if off == 0 { "Snap Points".to_string() } else { format!("Snap Points ({} off)", off) };
+                let r = ui.menu_button(RichText::new(app.tr_label(&label)), |ui| {
+                    for (name, bit) in SNAP_KINDS {
+                        let mut on = app.ui.snap_kinds & bit != 0;
+                        let r = ui.checkbox(&mut on, app.tr_label(name));
+                        crate::scenario::publish_handle(&format!("selection:snap:{name}"), r.rect.center());
+                        if r.changed() {
+                            app.ui.snap_kinds = if on { app.ui.snap_kinds | bit } else { app.ui.snap_kinds & !bit };
+                        }
+                    }
+                });
+                crate::scenario::publish_handle("selection:snap", r.response.rect.center());
+                r.response.on_hover_text(app.tr_label("Snap points"));
             });
         },
     );

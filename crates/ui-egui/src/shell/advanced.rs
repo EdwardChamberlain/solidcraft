@@ -39,6 +39,7 @@ pub fn set_pane(ctx: &egui::Context, pane: Pane) {
 pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     // What picking an edge takes with it follows the selection bar.
     crate::selection::set_intent(app.ui.selection_intent);
+    crate::selection::set_snaps(app.ui.snap_kinds);
     // A part just made the work part: its Part Navigator (and the banner) comes forward.
     if let Some(work) = app.work.as_mut().filter(|w| w.fresh) {
         work.fresh = false;

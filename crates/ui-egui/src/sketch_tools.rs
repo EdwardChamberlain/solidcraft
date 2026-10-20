@@ -273,8 +273,10 @@ pub fn refine_snap(
     let (a, b) = (proj.to_screen(plane.to_world(lp))?, proj.to_screen(plane.to_world(lp + Vec2::X))?);
     let px = 1.0 / (a.distance(b) as f64).max(1e-9);
     let tol = 7.0 * px;
-    // A model vertex under the cursor: drawing on it projects it into the sketch.
-    for h in pick(app, proj, a) {
+    // A model vertex under the cursor: drawing on it projects it into the sketch (the Advanced
+    // approach's sketches hold only what is drawn in them).
+    let advanced = app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced;
+    for h in pick(app, proj, a).into_iter().filter(|_| !advanced) {
         if let Hit::Vertex { point, .. } = h {
             SNAP.with(|s| *s.borrow_mut() = Some(("Pt", plane.to_local(point))));
             return Some((plane.to_local(point), Some(format!("vertex:{},{},{}", point.x, point.y, point.z))));
@@ -282,7 +284,7 @@ pub fn refine_snap(
     }
     let mut best: Option<(f64, &'static str, Vec2)> = None;
     let mut mid_of: Option<String> = None;
-    for (i, c) in sk.curves.iter().enumerate() {
+    for (i, c) in sk.curves.iter().enumerate().filter(|_| crate::selection::snap_on(1)) {
         if let solidcraft_engine::sketch::CurveKind::Line { .. } = c.kind
             && let Some(solidcraft_engine::sketch::Shape::Line { a, b }) = sk.shape(i)
         {
@@ -308,13 +310,14 @@ pub fn refine_snap(
     let line_tool = app.tool.as_ref().is_none_or(|t| t.cmd == "sketch.line");
     if best.is_none()
         && line_tool
+        && crate::selection::snap_on(4)
         && let Some(prev) = prev
         && let Some(i) = crate::inference::tangent(sk, prev, lp, tol)
     {
         best = Some((i.dist, i.label(), i.at));
     }
     // On a curve (coincident with it).
-    if best.is_none() {
+    if best.is_none() && crate::selection::snap_on(2) {
         for (i, c) in sk.curves.iter().enumerate() {
             let Some(sh) = sk.shape(i) else { continue };
             let d = sh.dist(lp);
@@ -326,6 +329,7 @@ pub fn refine_snap(
         }
     }
     if best.is_none()
+        && crate::selection::snap_on(8)
         && let Some(prev) = prev
     {
         let (dx, dy) = ((lp.x - prev.x).abs(), (lp.y - prev.y).abs());
@@ -341,6 +345,7 @@ pub fn refine_snap(
     // Line tool: parallel or perpendicular to a line, or on a line's extension.
     if best.is_none()
         && line_tool
+        && crate::selection::snap_on(16)
         && let Some(prev) = prev
         && let Some(i) = crate::inference::lines(sk, prev, lp, tol)
     {

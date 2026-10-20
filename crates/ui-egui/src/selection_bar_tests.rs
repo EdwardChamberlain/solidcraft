@@ -133,3 +133,59 @@ fn the_bar_has_a_filter_a_scope_and_an_intent_and_they_change_the_state() {
     // The state is visible to scripts and agents.
     assert!(h.app.prefs().contains("\"selection_scope\":\"work_part\""));
 }
+
+#[test]
+fn face_edges_and_connected_curves_take_the_boundary_and_the_whole_wire_with_an_edge() {
+    let mut h = advanced();
+    h.app.run("solid.box", json!({"length": 20, "width": 20, "height": 20, "body_name": "Cube"})).unwrap();
+    h.frames(4);
+    let st = h.app.session.world_state();
+    let m = st.body("Cube").unwrap().mesh();
+    let at = m.edges[0].first().copied().unwrap();
+    let sel = Sel::Edge { body: "Cube".into(), index: 0, point: at };
+    let count = |intent: Intent| {
+        crate::selection::set_intent(intent);
+        let n = crate::viewport::grouped_selection(&h.app.session, &sel).len();
+        crate::selection::set_intent(Intent::Single);
+        n
+    };
+    assert_eq!(count(Intent::Single), 1);
+    assert_eq!(count(Intent::FaceEdges), 4, "a face of a cube has four edges");
+    assert_eq!(count(Intent::Connected), 12, "all the cube's edges meet end to end");
+}
+
+#[test]
+fn the_snap_points_menu_turns_each_inference_off_and_the_state_reaches_the_picks() {
+    let mut h = advanced();
+    h.frames(4);
+    assert!(crate::scenario::handle_at("selection:snap").is_some());
+    assert!(crate::selection::snap_on(1) && crate::selection::snap_on(16), "all on to start");
+    h.step(&json!({"click":{"handle":"selection:snap"}})).unwrap();
+    h.step(&json!({"click":{"handle":"selection:snap:Midpoint"}})).unwrap();
+    h.frames(3);
+    assert!(!crate::selection::snap_on(1) && crate::selection::snap_on(2), "the midpoint inference is off, the others on");
+    assert_eq!(h.app.ui.snap_kinds & 1, 0);
+    // It is part of the saved state scripts and agents see.
+    let state: serde_json::Value = serde_json::from_str(&h.app.prefs()).unwrap();
+    assert_eq!(state["snap_kinds"], json!(h.app.ui.snap_kinds));
+}
+
+#[test]
+fn an_advanced_sketch_does_not_snap_to_a_model_vertex_so_nothing_is_projected() {
+    let mut h = advanced();
+    h.app.run("solid.box", json!({"length": 20, "width": 20, "height": 20})).unwrap();
+    h.app.run("sketch.create", json!({"plane": "XY", "name": "S"})).unwrap();
+    h.frames(4);
+    let st = h.app.session.world_state();
+    let ss = st.sketch(h.app.session.active_sketch.unwrap()).unwrap();
+    let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0));
+    h.app.fit_view();
+    let proj = crate::viewport::projection(&h.app, rect);
+    let on_vertex = ss.plane.to_local(solidcraft_engine::geom::Vec3::new(20.0, 20.0, 0.0));
+    let snapped = crate::sketch_tools::refine_snap(&h.app, &proj, &ss.sketch, &ss.plane, on_vertex);
+    assert!(snapped.as_ref().is_none_or(|(_, arg)| arg.as_deref().is_none_or(|a| !a.starts_with("vertex:"))), "{snapped:?}");
+    // Classic still does: the control for this test.
+    h.app.preferences.modelling_approach = ModellingApproach::Classic;
+    let classic = crate::sketch_tools::refine_snap(&h.app, &proj, &ss.sketch, &ss.plane, on_vertex);
+    assert!(classic.is_some_and(|(_, arg)| arg.is_some_and(|a| a.starts_with("vertex:"))), "Classic snaps to the vertex");
+}

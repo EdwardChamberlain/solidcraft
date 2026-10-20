@@ -74,13 +74,10 @@ pub fn left_timeline(app: &mut SolveApp, ui: &mut egui::Ui) {
     let groups = app.session.doc.timeline_groups.clone();
     ui.horizontal(|ui| {
         ui.set_min_height(22.0);
-        // The Advanced approach shows a tree that replays top to bottom, not a history.
-        let heading =
-            if app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced { "FEATURE TREE" } else { "FEATURE HISTORY" };
-        ui.label(RichText::new(heading).size(11.0).strong().color(t.text_dim));
-        if app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced && selected_related(app).is_some() {
-            ui.label(RichText::new("parents").size(11.0).color(t.warning));
-            ui.label(RichText::new("children").size(11.0).color(t.preview_add));
+        // The Advanced tree has no heading or legend: the colours of a selected feature's parents
+        // and children speak for themselves.
+        if app.preferences.modelling_approach != crate::prefs::ModellingApproach::Advanced {
+            ui.label(RichText::new("FEATURE HISTORY").size(11.0).strong().color(t.text_dim));
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let count = selected_feature_ids(app).len() + app.tree.picked_timeline_groups.len();

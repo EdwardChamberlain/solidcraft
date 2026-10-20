@@ -400,6 +400,35 @@ impl Mesh {
         rim.sort_unstable();
         rim
     }
+    /// Every edge joined to `e` end to end (sharing an end point, through corners too),
+    /// including `e` itself.
+    pub fn connected_edges(&self, e: usize) -> Vec<usize> {
+        let tol = self.bounds().diagonal().max(1e-9) * 1e-7;
+        let ends = |i: usize| -> Option<[Vec3; 2]> {
+            let p = self.edges.get(i)?;
+            Some([*p.first()?, *p.last()?])
+        };
+        let mut chain = vec![e];
+        let mut todo = vec![e];
+        while let Some(cur) = todo.pop() {
+            let Some(ce) = ends(cur) else { continue };
+            for i in 0..self.edges.len() {
+                if chain.len() >= 10_000 {
+                    break;
+                }
+                if chain.contains(&i) || !self.edge_pickable(i) {
+                    continue;
+                }
+                if ends(i).is_some_and(|ne| ce.iter().any(|p| ne.iter().any(|q| p.dist(*q) < tol))) {
+                    chain.push(i);
+                    todo.push(i);
+                }
+            }
+        }
+        chain.sort_unstable();
+        chain
+    }
+
     /// The edges reached from `e` through vertices where the next edge continues smoothly
     /// (angle between the end tangents below `max_angle`), including `e` itself.
     pub fn tangent_chain(&self, e: usize, max_angle: f64) -> Vec<usize> {

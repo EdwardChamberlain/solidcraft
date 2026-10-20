@@ -2918,9 +2918,17 @@ pub(crate) fn grouped_selection(s: &solidcraft_engine::Session, sel: &Sel) -> Ve
             if let Some(b) = st.body(body) {
                 let m = b.mesh();
                 // The selection bar's intent: the edges that continue this one smoothly.
-                if crate::selection::intent() == crate::selection::Intent::TangentChain {
-                    let chain: Vec<Sel> = m
-                        .tangent_chain(*index, 2f64.to_radians())
+                let chain_of = match crate::selection::intent() {
+                    crate::selection::Intent::TangentChain => Some(m.tangent_chain(*index, 2f64.to_radians())),
+                    crate::selection::Intent::FaceEdges => {
+                        // The boundary of the face beside the edge (the first it has).
+                        Some(m.edge_faces.get(*index).and_then(|f| f.first()).map_or_else(|| vec![*index], |f| m.face_edges(*f)))
+                    }
+                    crate::selection::Intent::Connected => Some(m.connected_edges(*index)),
+                    crate::selection::Intent::Single => None,
+                };
+                if let Some(chain) = chain_of {
+                    let chain: Vec<Sel> = chain
                         .into_iter()
                         .filter_map(|i| m.edges.get(i).map(|e| Sel::Edge { body: body.clone(), index: i, point: polyline_mid(e) }))
                         .collect();

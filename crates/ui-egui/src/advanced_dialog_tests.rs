@@ -52,7 +52,7 @@ fn datum_dialogs_exist_only_in_advanced_and_list_every_method_per_class() {
     use crate::dialogs::Kind;
     let mut classic = Harness::new();
     classic.app.start("construct.axis.two_points");
-    assert!(classic.app.dialog.is_none(), "Classic still has no axis dialog");
+    assert!(!classic.app.dialog.as_ref().is_some_and(|d| matches!(d.kind, Kind::Datum { .. })), "Classic has no datum Type dialog");
 
     let mut h = Harness::new();
     h.app.preferences.modelling_approach = ModellingApproach::Advanced;
@@ -238,7 +238,7 @@ fn editing_a_datum_through_its_dialog_redefines_it_in_place() {
     let FeatureKind::ConstructionAxis { def: AxisDef::TwoPoints { b, .. } } = &h.app.session.doc.feature(id).unwrap().kind else {
         panic!("an axis through two points")
     };
-    assert!(matches!(b, GeoRef::Vertex { at } if (at.y - 10.0).abs() < 1e-6), "{b:?}");
+    assert!(matches!(b, GeoRef::Vertex { at, .. } if (at.y - 10.0).abs() < 1e-6), "{b:?}");
 }
 
 #[test]
@@ -251,12 +251,11 @@ fn the_preview_group_switches_the_live_result_off_and_on() {
     assert!(h.app.preview.active, "the result is previewed by default");
     h.step(&json!({"widget":"Show result"})).unwrap();
     h.frames(6);
-    assert!(h.app.preview.hidden && !h.app.preview.active, "Show result off clears the preview");
+    assert!(!h.app.dialog.as_ref().unwrap().preview_enabled && !h.app.preview.active, "Show result off clears the preview");
     let before = features(&h);
     h.step(&json!({"widget":"OK"})).unwrap();
     h.frames(6);
     assert_eq!(features(&h), before + 1, "OK still makes the feature");
-    h.app.preview.hidden = false;
 }
 
 #[test]

@@ -169,6 +169,7 @@ pub(crate) fn modifier_motion(
     let previous = app.viewport.modifier_nav;
     if previous.map(|(m, _)| m) != next.map(|(m, _)| m) {
         app.viewport.orbit_pivot = None;
+        app.viewport.orbit_from = None;
         app.viewport.orbit_free = None;
         app.viewport.orbit_snap = None;
     }
@@ -271,6 +272,7 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
             i.pointer.delta(),
         )
     });
+    let hover = hover.filter(|p| !crate::shell::covered(app, *p));
     // The right button belongs to the marking menu while it is open.
     let secondary_down = secondary_down && app.viewport.context_menu.is_none();
     // The axis view handles its own clicks; the model underneath must not see them.
@@ -279,10 +281,9 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
     // hit test also counts the model as under the pointer a few points past its own edge and
     // inside a window's or a list's edge (#678), so the pointer must be in the viewport too,
     // with no window or menu above it.
-    let inside = resp.contains_pointer() && ui.rect_contains_pointer(rect) && hover.is_some_and(|p| !axes.contains(p));
+    let inside = ui.is_enabled() && resp.contains_pointer() && ui.rect_contains_pointer(rect) && hover.is_some_and(|p| !axes.contains(p));
     app.viewport.mouse = hover.filter(|_| inside);
-    // Ctrl or Alt held: drawing and dragging don't snap.
-    crate::drag_snap::set_suppressed(mods.ctrl || mods.alt || mods.command);
+    // Sketch snap suppression is set once in `viewport::show` from preferences.
     middle_double_click(app, ui, inside);
     // The 3D mouse's motion this frame, with what this page's camera may do.
     device(app, rect, caps);
@@ -408,7 +409,10 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
     } else {
         None
     };
-    let dragging = resp.dragged() || (inside && button.is_some());
+    // An orbit started on the viewport owns its button until release, including over a
+    // floating shell card that disables the underlying egui response.
+    let captured_orbit = app.viewport.orbit_from.is_some() && button.is_some();
+    let dragging = resp.dragged() || (inside && button.is_some()) || captured_orbit;
     // Without orbit (a flat page), bindings that orbit do nothing.
     let allowed = |m: NavMode| caps.orbit || m != NavMode::Orbit;
     let motion = modifier_motion(app, ui, inside, hover, mods, picking).filter(|(m, _)| allowed(*m));
@@ -451,7 +455,7 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
     } else if mode == Some(NavMode::Orbit) {
         let press = ui.input(|i| i.pointer.press_origin());
         app.cancel_view_animation();
-        // Shift can be required to enter orbit (Fusion/Inventor middle drag, Alias Shift+Alt),
+        // Shift can be required to enter orbit (middle drag, Alias Shift+Alt),
         // rather than an additional request for snapping. Only an extra modifier snaps.
         let without_shift = egui::Modifiers { shift: false, ..mods };
         let snap = app.preferences.nav != crate::prefs::OPENSCAD_NAV
@@ -481,6 +485,7 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
     }
     if !dragging && motion.is_none() {
         app.viewport.orbit_pivot = None;
+        app.viewport.orbit_from = None;
     }
     if app.viewport.spin {
         // A click on the navigation bar (its own button) is not a stop.
@@ -699,11 +704,32 @@ pub fn orbit(app: &mut SolveApp, rect: egui::Rect, dx: f64, dy: f64, press: Opti
             }
         }),
     };
-    let Some(pivot) = pivot else {
-        app.cam.orbit(dx, dy);
-        return;
+    // The drag's whole turn so far, applied to the camera it began with: the view depends on
+    // where the pointer is, not on the path it took, so fast or erratic drags (a pitch held at
+    // straight up or down for a while, many tiny steps) can't drift. Anything else that moves
+    // the camera meanwhile (a wheel zoom, a new pivot) starts the sum again from there.
+    let from = match app.viewport.orbit_from {
+        Some(f) if f.last == app.cam && f.pivot == pivot => f,
+        _ => OrbitFrom { start: app.cam, dx: 0.0, dy: 0.0, pivot, last: app.cam },
     };
-    app.cam.orbit_about(dx, dy, pivot);
+    let (dx, dy) = (from.dx + dx, from.dy + dy);
+    app.cam = from.start;
+    match pivot {
+        Some(p) => app.cam.orbit_about(dx, dy, p),
+        None => app.cam.orbit(dx, dy),
+    }
+    app.viewport.orbit_from = Some(OrbitFrom { dx, dy, last: app.cam, ..from });
+}
+
+/// An orbit drag so far: the camera it began with, the pointer's total motion since, the pivot
+/// and the camera that produced.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OrbitFrom {
+    start: Camera,
+    dx: f64,
+    dy: f64,
+    pivot: Option<Vec3>,
+    last: Camera,
 }
 
 #[cfg(test)]
@@ -760,7 +786,7 @@ mod tests {
             let mut app = crate::SolveApp::new(s, crate::Services::default());
             app.preferences.nav = preset.into();
             app.viewport.spin = true;
-            let ctx = egui::Context::default();
+            let ctx = crate::fonts::test_context();
             let mut time = 0.0;
             let mut frame = |app: &mut crate::SolveApp, mods: Modifiers, events: Vec<Event>| {
                 time += 1.0 / 60.0;
@@ -825,7 +851,7 @@ mod tests {
             let mut s = solidcraft_engine::Session::default();
             s.execute("solid.box", &serde_json::json!({"length":40,"width":30,"height":20})).unwrap();
             let mut app = crate::SolveApp::new(s, crate::Services::default());
-            let ctx = egui::Context::default();
+            let ctx = crate::fonts::test_context();
             let before = app.cam;
             app.viewport.device_motion = Some(every_axis);
             let raw = egui::RawInput {

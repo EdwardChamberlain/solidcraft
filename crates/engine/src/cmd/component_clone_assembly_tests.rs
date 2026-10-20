@@ -6,7 +6,7 @@ use solidcraft_doc::{IDENTITY, Occurrence};
 use solidcraft_geom::Vec3;
 
 fn at(occurrence: u64) -> JointOrigin {
-    JointOrigin { occurrence, snap: Snap::Point { point: Vec3::ZERO, z: None } }
+    JointOrigin { occurrence, snap: Snap::Point { point: Vec3::ZERO, z: None, x: None } }
 }
 
 fn joint(id: u64, a: u64, b: u64) -> Joint {
@@ -21,8 +21,8 @@ fn joint(id: u64, a: u64, b: u64) -> Joint {
         flip: true,
         offset: 2.0,
         angle: 0.1,
-        tilt: 0.0,
         suppressed: false,
+        exprs: Default::default(),
     }
 }
 

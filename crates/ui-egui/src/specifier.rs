@@ -22,6 +22,7 @@ use solidcraft_engine::geom::Vec3;
 use crate::SolveApp;
 use crate::dialogs::{self, Dialog, Kind};
 use crate::selection::{AXES, Accept, EDGES, FACES, PLANAR_FACES, PLANES, POINTS, SKETCH_POINTS, SelInput, VERTICES};
+use crate::ui_kit;
 
 /// What a specifier answers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -363,7 +364,7 @@ pub fn choose(app: &SolveApp, d: &mut Dialog, index: usize, id: &str) -> bool {
 pub fn show(app: &SolveApp, d: &mut Dialog, ui: &mut Ui, index: usize, title: &str, group: &str) -> bool {
     let Some(spec) = d.specs.get(index).cloned() else { return false };
     let owned = indices(d, index);
-    let t = crate::theme::Tokens::get();
+    let _t = crate::theme::Tokens::get();
     let open = std::cell::Cell::new(false);
     let mut reset = false;
     let mut reverse = spec.reverse;
@@ -374,15 +375,13 @@ pub fn show(app: &SolveApp, d: &mut Dialog, ui: &mut Ui, index: usize, title: &s
     };
     let mut trailing = |ui: &mut Ui| {
         if spec.class == Class::Vector {
-            let r = ui.add(egui::Button::new("").selected(reverse).min_size(egui::vec2(26.0, 22.0)));
-            crate::icons::paint(ui.painter(), r.rect.shrink(4.0), "pattern_flip", t.icon, t.icon_fill, t.accent);
+            let r = icon_square(ui, "pattern_flip", reverse);
             crate::scenario::publish_handle(&format!("dialog:reverse:{group}"), r.rect.center());
             if r.on_hover_text(dialogs::tr("Reverse")).clicked() {
                 reverse = !reverse;
             }
         }
-        let r = ui.add(egui::Button::new("").min_size(egui::vec2(26.0, 22.0)));
-        crate::icons::paint(ui.painter(), r.rect.shrink(3.0), icon, t.icon, t.icon_fill, t.accent);
+        let r = icon_square(ui, icon, false);
         crate::scenario::publish_handle(&format!("dialog:specify:{group}"), r.rect.center());
         if r.on_hover_text(dialogs::tr(title)).clicked() {
             open.set(true);
@@ -390,27 +389,35 @@ pub fn show(app: &SolveApp, d: &mut Dialog, ui: &mut Ui, index: usize, title: &s
     };
     match owned.first() {
         // Inferred: the selector itself.
-        Some(&first) if spec.ty == 0 => dialogs::input_rows_range_with(d, ui, &app.session, first..first + 1, Some(title), &mut trailing),
+        Some(&first) if spec.ty == 0 => dialogs::input_rows_range_with(
+            d,
+            ui,
+            &app.session,
+            first..first + 1,
+            Some(title),
+            if spec.class == Class::Vector { 58.0 } else { 30.0 },
+            &mut trailing,
+        ),
         // A way that was chosen in the dialog (or needs no pick): what it is, where the pick would be.
         _ => {
-            dialogs::row_label(ui, title);
-            ui.horizontal(|ui| {
-                let text = way_text(&spec);
-                let chip = ui.add(egui::Button::new(text).fill(t.chip).min_size(egui::vec2(0.0, 22.0)));
-                if chip.on_hover_text(dialogs::tr("Edit")).clicked() {
-                    open.set(true);
-                }
-                if spec.ty != 0 {
-                    let clear = ui.small_button("×").on_hover_text(dialogs::tr("Clear the selection"));
-                    crate::scenario::publish_handle(&format!("dialog:clear:{group}"), clear.rect.center());
-                    if clear.clicked() {
-                        // Back to the selector: Inferred, nothing picked.
-                        reset = true;
+            ui_kit::row(ui, title, |ui| {
+                ui.horizontal(|ui| {
+                    let text = way_text(&spec);
+                    let chip = ui_kit::button(ui, text, ui_kit::Button::Normal);
+                    if chip.on_hover_text(dialogs::tr("Edit")).clicked() {
+                        open.set(true);
                     }
-                }
-                trailing(ui);
+                    if spec.ty != 0 {
+                        let clear = ui_kit::compact_button(ui, "×", "Clear the selection", true, false);
+                        crate::scenario::publish_handle(&format!("dialog:clear:{group}"), clear.rect.center());
+                        if clear.clicked() {
+                            // Back to the selector: Inferred, nothing picked.
+                            reset = true;
+                        }
+                    }
+                    trailing(ui);
+                });
             });
-            ui.end_row();
         }
     }
     if let Some(slot) = d.specs.get_mut(index) {
@@ -550,9 +557,9 @@ pub fn sub_rows(app: &SolveApp, d: &mut Dialog, ui: &mut Ui) -> bool {
     let all = dialog_choices(spec.class);
     let labels: Vec<&str> = all.iter().map(|c| c.1).collect();
     let mut at = spec.ty.saturating_sub(1);
-    dialogs::row_label(ui, "Type");
-    dialogs::combo(ui, "specifier_sub_type", &labels, &mut at);
-    ui.end_row();
+    ui_kit::row(ui, "Type", |ui| {
+        dialogs::combo(ui, "specifier_sub_type", &labels, &mut at);
+    });
     if at + 1 != spec.ty {
         set_type(app, d, 0, at + 1);
     }
@@ -565,46 +572,46 @@ pub fn sub_rows(app: &SolveApp, d: &mut Dialog, ui: &mut Ui) -> bool {
             if let Some(inner) = spec.inner.as_mut()
                 && let Some((label, _, value)) = inner.primary()
             {
-                dialogs::row_label(ui, label);
-                enter |= dialogs::field(ui, value);
-                ui.end_row();
+                ui_kit::row(ui, label, |ui| {
+                    enter |= dialogs::field(ui, value);
+                });
             }
         }
         (Class::Vector, "axis") => {
-            dialogs::row_label(ui, "Axis");
-            let mut axis = ["X", "Y", "Z"].iter().position(|a| spec.values.first().is_some_and(|v| v == a)).unwrap_or(0);
-            dialogs::combo(ui, "specifier_sub_axis", &["X", "Y", "Z"], &mut axis);
-            spec.values = vec![["X", "Y", "Z"][axis.min(2)].to_string()];
-            ui.end_row();
+            ui_kit::row(ui, "Axis", |ui| {
+                let mut axis = ["X", "Y", "Z"].iter().position(|a| spec.values.first().is_some_and(|v| v == a)).unwrap_or(0);
+                dialogs::combo(ui, "specifier_sub_axis", &["X", "Y", "Z"], &mut axis);
+                spec.values = vec![["X", "Y", "Z"][axis.min(2)].to_string()];
+            });
         }
         (Class::Vector, "components") => {
             if spec.values.len() != 3 {
                 spec.values = vec!["1".into(), "0".into(), "0".into()];
             }
             for (k, label) in ["X", "Y", "Z"].iter().enumerate() {
-                dialogs::row_label(ui, label);
-                if let Some(v) = spec.values.get_mut(k) {
-                    enter |= dialogs::field(ui, v);
-                }
-                ui.end_row();
+                ui_kit::row(ui, label, |ui| {
+                    if let Some(v) = spec.values.get_mut(k) {
+                        enter |= dialogs::field(ui, v);
+                    }
+                });
             }
         }
         (Class::Point, "coords") => {
             for (k, label) in ["X", "Y", "Z"].iter().enumerate() {
-                dialogs::row_label(ui, label);
-                if let Some(v) = spec.values.get_mut(k) {
-                    enter |= dialogs::field(ui, v);
-                }
-                ui.end_row();
+                ui_kit::row(ui, label, |ui| {
+                    if let Some(v) = spec.values.get_mut(k) {
+                        enter |= dialogs::field(ui, v);
+                    }
+                });
             }
         }
         _ => {}
     }
     if spec.class == Class::Vector {
-        dialogs::row_label(ui, "Reverse");
-        let r = ui.checkbox(&mut spec.reverse, "");
-        crate::scenario::publish_handle("dialog:reverse:sub", r.rect.center());
-        ui.end_row();
+        ui_kit::row(ui, "Reverse", |ui| {
+            let r = ui_kit::checkbox(ui, "", &mut spec.reverse);
+            crate::scenario::publish_handle("dialog:reverse:sub", r.rect.center());
+        });
     }
     if let Some(slot) = d.specs.first_mut() {
         *slot = spec;
@@ -864,4 +871,17 @@ fn fmt_number(v: f64) -> String {
     let s = format!("{v:.6}");
     let s = s.trim_end_matches('0').trim_end_matches('.');
     if s.is_empty() || s == "-0" { "0".into() } else { s.into() }
+}
+
+/// A small square button showing one of the reviewed icons.
+fn icon_square(ui: &mut Ui, icon: &str, selected: bool) -> egui::Response {
+    let t = crate::theme::Tokens::get();
+    let (rect, r) = ui.allocate_exact_size(egui::vec2(26.0, 22.0), egui::Sense::click());
+    if selected {
+        ui.painter().rect_filled(rect, t.control_radius, t.selected_bg);
+    } else if r.hovered() {
+        ui.painter().rect_filled(rect, t.control_radius, t.hover);
+    }
+    crate::icons::paint(ui.painter(), rect.shrink(4.0), icon, t.icon, t.icon_fill, t.accent);
+    r
 }

@@ -14,7 +14,8 @@ use solidcraft_engine::Sel;
 use solidcraft_engine::geom::Vec3;
 
 use crate::SolveApp;
-use crate::dialogs::{self, Dialog, FROM_OBJECT, Kind, OP_LABELS, TWO_SIDES, field, row_label, section};
+use crate::dialogs::{self, Dialog, FROM_OBJECT, Kind, OP_LABELS, TWO_SIDES, field, section};
+use crate::ui_kit;
 
 const START_TYPES: [&str; 3] = ["Value", "Value (Other Side)", "Until Selected"];
 const END_TYPES: [&str; 5] = ["Value", "Value from Start", "Symmetric Value", "Until Selected", "Through All"];
@@ -86,9 +87,9 @@ pub fn rows(app: &SolveApp, d: &mut Dialog, ui: &mut Ui) -> bool {
 
     enter |= crate::specifier::show(app, d, ui, 0, "Direction", "extrude_direction");
     if let Err(why) = direction_sign(app, d) {
-        row_label(ui, "");
-        ui.label(egui::RichText::new(why).color(crate::theme::Tokens::get().error));
-        ui.end_row();
+        ui_kit::row(ui, "", |ui| {
+            ui.label(egui::RichText::new(why).color(crate::theme::Tokens::get().error));
+        });
     }
     sync_direction(app, d);
 
@@ -100,23 +101,23 @@ pub fn rows(app: &SolveApp, d: &mut Dialog, ui: &mut Ui) -> bool {
     }
     let Kind::Extrude { direction, taper, taper_present, operation, auto_op, .. } = &mut d.kind else { return enter };
     if *direction < 2 && section(ui, "extrude_draft", "Draft", *taper_present) {
-        row_label(ui, "Taper Angle");
-        let before = taper.clone();
-        enter |= field(ui, taper);
-        if *taper != before {
-            *taper_present = !taper.trim().is_empty();
-        }
-        ui.end_row();
+        ui_kit::row(ui, "Taper Angle", |ui| {
+            let before = taper.clone();
+            enter |= field(ui, taper);
+            if *taper != before {
+                *taper_present = !taper.trim().is_empty();
+            }
+        });
     }
     if section(ui, "extrude_boolean", "Boolean", true) {
-        row_label(ui, "Operation");
-        let before = *operation;
-        dialogs::combo(ui, "ex_op", &OP_LABELS, operation);
-        // A choice made by hand sticks.
-        if *operation != before {
-            *auto_op = false;
-        }
-        ui.end_row();
+        ui_kit::row(ui, "Operation", |ui| {
+            let before = *operation;
+            dialogs::combo(ui, "ex_op", &OP_LABELS, operation);
+            // A choice made by hand sticks.
+            if *operation != before {
+                *auto_op = false;
+            }
+        });
     }
     enter
 }
@@ -182,9 +183,9 @@ fn limits(app: &SolveApp, d: &mut Dialog, ui: &mut Ui) -> bool {
     };
     if end_now != 2 {
         let current = start_type;
-        row_label(ui, "Start");
-        dialogs::combo(ui, "ex_start_type", &START_TYPES, &mut start_type);
-        ui.end_row();
+        ui_kit::row(ui, "Start", |ui| {
+            dialogs::combo(ui, "ex_start_type", &START_TYPES, &mut start_type);
+        });
         if start_type != current {
             let reverse = *direction == 1;
             *direction = if start_type == 1 { TWO_SIDES } else { usize::from(reverse) };
@@ -194,14 +195,14 @@ fn limits(app: &SolveApp, d: &mut Dialog, ui: &mut Ui) -> bool {
         }
         match start_type {
             0 => {
-                row_label(ui, "Distance");
-                enter |= field(ui, start);
-                ui.end_row();
+                ui_kit::row(ui, "Distance", |ui| {
+                    enter |= field(ui, start);
+                });
             }
             1 => {
-                row_label(ui, "Distance");
-                enter |= field(ui, distance2);
-                ui.end_row();
+                ui_kit::row(ui, "Distance", |ui| {
+                    enter |= field(ui, distance2);
+                });
             }
             _ => {}
         }
@@ -209,9 +210,9 @@ fn limits(app: &SolveApp, d: &mut Dialog, ui: &mut Ui) -> bool {
 
     // End.
     let mut end = end_now;
-    row_label(ui, "End");
-    dialogs::combo(ui, "ex_end_type", &END_TYPES, &mut end);
-    ui.end_row();
+    ui_kit::row(ui, "End", |ui| {
+        dialogs::combo(ui, "ex_end_type", &END_TYPES, &mut end);
+    });
     if end != end_now {
         *all = end == 4;
         match end {
@@ -244,27 +245,27 @@ fn limits(app: &SolveApp, d: &mut Dialog, ui: &mut Ui) -> bool {
                         *made = want;
                     }
                 }
-                row_label(ui, "Distance");
-                if field(ui, typed) {
-                    enter = true;
-                }
-                let want = from_start(app, typed, start);
-                if want != *distance {
-                    distance.clone_from(&want);
-                    *made = want;
-                }
-                ui.end_row();
+                ui_kit::row(ui, "Distance", |ui| {
+                    if field(ui, typed) {
+                        enter = true;
+                    }
+                    let want = from_start(app, typed, start);
+                    if want != *distance {
+                        distance.clone_from(&want);
+                        *made = want;
+                    }
+                });
             }
         }
         1 | 2 => {
-            row_label(ui, if end == 2 { "Distance (total)" } else { "Distance" });
-            enter |= field(ui, distance);
-            ui.end_row();
+            ui_kit::row(ui, if end == 2 { "Distance (total)" } else { "Distance" }, |ui| {
+                enter |= field(ui, distance);
+            });
         }
         3 => {
-            row_label(ui, "Offset");
-            enter |= field(ui, to_offset);
-            ui.end_row();
+            ui_kit::row(ui, "Offset", |ui| {
+                enter |= field(ui, to_offset);
+            });
         }
         _ => {}
     }
@@ -295,9 +296,9 @@ fn offset(d: &mut Dialog, ui: &mut Ui) -> bool {
         }
     };
     let mut picked = current;
-    row_label(ui, "Type");
-    dialogs::combo(ui, "ex_offset_type", &OFFSET_TYPES, &mut picked);
-    ui.end_row();
+    ui_kit::row(ui, "Type", |ui| {
+        dialogs::combo(ui, "ex_offset_type", &OFFSET_TYPES, &mut picked);
+    });
     if picked != current {
         *thin = picked != 0;
         *wall_side = match picked {
@@ -314,7 +315,7 @@ fn offset(d: &mut Dialog, ui: &mut Ui) -> bool {
     }
     if *thin {
         let two = *wall_side == 3;
-        row_label(
+        ui_kit::row(
             ui,
             if two {
                 "Start Offset"
@@ -323,13 +324,14 @@ fn offset(d: &mut Dialog, ui: &mut Ui) -> bool {
             } else {
                 "Offset"
             },
+            |ui| {
+                enter |= field(ui, wall);
+            },
         );
-        enter |= field(ui, wall);
-        ui.end_row();
         if two {
-            row_label(ui, "End Offset");
-            enter |= field(ui, wall2);
-            ui.end_row();
+            ui_kit::row(ui, "End Offset", |ui| {
+                enter |= field(ui, wall2);
+            });
         }
     }
     enter

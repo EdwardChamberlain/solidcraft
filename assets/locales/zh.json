@@ -464,6 +464,7 @@
   "cmd.library_apply": "应用本地库条目",
   "cmd.library_export": "导出设计库",
   "cmd.library_inspect": "检查本地库",
+  "cmd.mate_create": "配合",
   "cmd.material_assign": "物理材质",
   "cmd.material_create": "新建物理材质",
   "cmd.material_delete": "删除物理材质",

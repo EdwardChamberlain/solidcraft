@@ -464,6 +464,7 @@
   "cmd.library_apply": "ローカルライブラリ項目を適用",
   "cmd.library_export": "デザインライブラリを書き出す",
   "cmd.library_inspect": "ローカルライブラリを確認",
+  "cmd.mate_create": "合致",
   "cmd.material_assign": "物理マテリアル",
   "cmd.material_create": "新規物理マテリアル",
   "cmd.material_delete": "物理マテリアルを削除",

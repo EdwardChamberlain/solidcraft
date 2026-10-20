@@ -464,7 +464,7 @@
   "cmd.library_apply": "Apply Local Library Entry",
   "cmd.library_export": "Export Design Library",
   "cmd.library_inspect": "Inspect Local Library",
-  "cmd.mate.create": "Mate",
+  "cmd.mate_create": "Mate",
   "cmd.material_assign": "Physical Material",
   "cmd.material_create": "New Physical Material",
   "cmd.material_delete": "Delete Physical Material",

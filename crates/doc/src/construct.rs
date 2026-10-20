@@ -756,3 +756,75 @@ impl PlaneRef {
         !k.refs_mut().is_empty()
     }
 }
+
+/// What a datum is built from: the persistent names of the faces and edges it picked, the
+/// features it names (construction planes, axes and points), the sketches whose points and
+/// curves it uses, and the places it picked that carry no name (vertices).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GeoDeps {
+    pub names: Vec<String>,
+    pub features: Vec<String>,
+    pub sketches: Vec<u64>,
+    pub places: Vec<Vec3>,
+}
+
+impl GeoDeps {
+    fn add(&mut self, r: &GeoRef) {
+        match r {
+            GeoRef::Face { name: Some(n), .. } | GeoRef::Edge { name: Some(n), .. } => self.names.push(n.clone()),
+            GeoRef::Face { at, name: None } | GeoRef::Edge { at, name: None } | GeoRef::Vertex { at } => self.places.push(*at),
+            GeoRef::Plane { plane } => self.add_plane(plane),
+            // `Csys1:XY` is a part of the coordinate system `Csys1`.
+            GeoRef::Axis { name } | GeoRef::ConstructPoint { name } => self.features.push(name.split(':').next().unwrap_or(name).to_string()),
+            GeoRef::SketchPoint { sketch, .. } | GeoRef::SketchCurve { sketch, .. } => self.sketches.push(*sketch),
+            GeoRef::Point { .. } | GeoRef::Origin | GeoRef::World { .. } => {}
+        }
+    }
+
+    fn add_plane(&mut self, plane: &PlaneRef) {
+        use crate::walk::{Ref, Walk};
+        plane.walk_refs(&mut |r| {
+            if let Ref::Feature(name) = r {
+                self.features.push(name.as_ref().split(':').next().unwrap_or_default().to_string());
+            }
+        });
+        // Planes stand inside planes (offsets, reframings) a few levels deep at most; a planar
+        // face picked at the bottom of the chain names the feature that made it.
+        let mut leaf = plane;
+        for _ in 0..64 {
+            match leaf {
+                PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } | PlaneRef::Flipped { base, .. } | PlaneRef::Reframed { base, .. } => {
+                    leaf = base
+                }
+                _ => break,
+            }
+        }
+        if let PlaneRef::Face { at, name, .. } = leaf {
+            match name {
+                Some(n) => self.names.push(n.clone()),
+                None => self.places.push(*at),
+            }
+        }
+        let mut copy = plane.clone();
+        let inner: Vec<GeoRef> = copy.refs_mut().into_iter().map(|r| r.clone()).collect();
+        for r in &inner {
+            self.add(r);
+        }
+    }
+}
+
+impl crate::FeatureKind {
+    /// What this feature, if it is a datum or a sketch, is built on: the geometry its plane or
+    /// definition picked; `None` for any other feature.
+    pub fn datum_deps(&self) -> Option<GeoDeps> {
+        let mut d = GeoDeps::default();
+        match self {
+            crate::FeatureKind::ConstructionPlane { plane } | crate::FeatureKind::Sketch { plane, .. } => d.add_plane(plane),
+            crate::FeatureKind::ConstructionAxis { def } => def.refs().into_iter().for_each(|r| d.add(r)),
+            crate::FeatureKind::ConstructionPoint { def } => def.refs().into_iter().for_each(|r| d.add(r)),
+            crate::FeatureKind::ConstructionCsys { def } => def.refs().into_iter().for_each(|r| d.add(r)),
+            _ => return None,
+        }
+        Some(d)
+    }
+}

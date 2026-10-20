@@ -713,11 +713,13 @@ fn create_sketch_with_plane(s: &mut Session, p: &Value, plane: PlaneRef, interna
     }
     s.active_sketch = Some(id);
     let name = s.doc.feature(id).map(|f| f.name.clone()).unwrap_or_default();
-    // Sketching on a face projects the face's edges (unless turned off).
+    // Sketching on a face projects the face's edges (unless turned off). A part of the Advanced
+    // approach never does unless asked: its sketch holds only what was drawn in it.
     let face = p.get("plane").and_then(|v| v.get("face")).and_then(vec3);
     let mut link = None;
+    let by_default = s.auto_project && s.doc.approach != solidcraft_doc::Approach::Advanced;
     if let Some(at) = face
-        && bool_(p, "project_edges").unwrap_or(s.auto_project)
+        && bool_(p, "project_edges").unwrap_or(by_default)
     {
         link = super::sketch_project::auto_project_face(s, id, at)?;
         if link.is_none()

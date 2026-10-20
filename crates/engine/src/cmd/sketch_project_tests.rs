@@ -148,6 +148,26 @@ fn auto_project_can_be_turned_off() {
     assert!(r["projected"].is_null());
 }
 
+/// A part of the Advanced approach holds only what is drawn in its sketches: a circle on a face
+/// is the one region, the face's edges are not carried in (unless asked for).
+#[test]
+fn advanced_sketch_on_a_face_holds_only_what_is_drawn() {
+    let mut s = Session::default();
+    box_part(&mut s);
+    s.doc_mut().approach = solidcraft_doc::Approach::Advanced;
+    let r = run(&mut s, "sketch.create", json!({"plane": {"face": [20, 15, 20]}}));
+    assert!(r["projected"].is_null(), "{r}");
+    run(&mut s, "sketch.circle.center", json!({"center": [10, 10], "radius": 3}));
+    let si = inspect(&mut s);
+    assert!(linked_curves(&si).is_empty(), "{si}");
+    assert_eq!(si["profiles"].as_array().map(Vec::len), Some(1), "{si}");
+    assert!((si["profiles"][0]["area_mm2"].as_f64().unwrap() - std::f64::consts::PI * 9.0).abs() < 1e-6, "{si}");
+    run(&mut s, "sketch.finish", json!({}));
+    // Asked for outright, the edges still come in.
+    let r = run(&mut s, "sketch.create", json!({"plane": {"face": [20, 15, 20]}, "project_edges": true}));
+    assert!(r["projected"].is_string(), "{r}");
+}
+
 /// #680: auto-projection is a preference, not part of a design: turning it off holds for the
 /// next design started or opened in the session (`doc.recover` replaces the session the same way).
 #[test]

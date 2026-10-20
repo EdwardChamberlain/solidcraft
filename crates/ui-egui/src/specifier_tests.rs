@@ -294,25 +294,91 @@ fn reattach_sketch_takes_a_datum_plane_and_nothing_without_a_sketch() {
 }
 
 #[test]
-fn the_icon_beside_a_selector_opens_its_type_and_the_selector_infers_without_it() {
+fn the_icon_beside_a_selector_opens_its_own_dialog_and_ok_returns_the_choice() {
     let mut h = advanced();
     open(&mut h);
-    assert!(h.widget("Type").is_none(), "the type is not in the way until asked for");
+    assert!(h.widget("Type").is_none(), "the parent has no Type row: the dialog has");
     h.step(&json!({"click":{"handle":"dialog:specify:sketch_plane"}})).unwrap();
-    h.frames(3);
-    assert!(h.app.dialog.as_ref().unwrap().specs[0].open);
-    assert!(h.widget("Type").is_some(), "the plane's types are listed");
+    h.frames(4);
+    let d = h.app.dialog.as_ref().expect("the plane's dialog");
+    assert!(matches!(d.kind, crate::dialogs::Kind::Specify { index: 0 }), "{:?}", d.kind);
+    assert_eq!(h.app.dialog_stack.len(), 1, "the sketch dialog waits underneath");
+    assert!(h.widget("PLANE").is_some() && h.widget("Type").is_some(), "its own heading and Type");
+    // Offset from a plane.
     h.step(&json!({"click":{"handle":"dialog:Type"}})).unwrap();
     h.step(&json!({"click":{"handle":"dialog:Type:Offset from Plane"}})).unwrap();
     h.frames(3);
-    assert_eq!(h.app.dialog.as_ref().unwrap().specs[0].id(), "construct.plane.offset");
-    assert!(h.widget("Distance").is_some(), "what the Offset asks for is in view");
-    // Inferred: with the type left alone, picking a plane is enough.
+    {
+        let d = h.app.dialog.as_mut().unwrap();
+        assert_eq!(d.specs[0].id(), "construct.plane.offset");
+        d.inputs[0].items = vec![plane("XY")];
+        *d.specs[0].inputs_value_mut().expect("a distance") = "20 mm".into();
+    }
+    ok(&mut h);
+    let d = h.app.dialog.as_ref().expect("back in the sketch dialog");
+    assert!(matches!(d.kind, crate::dialogs::Kind::Sketch) && h.app.dialog_stack.is_empty());
+    assert_eq!(d.specs[0].id(), "construct.plane.offset", "the choice came back");
+    assert!(h.widget("Offset from Plane").is_some(), "the selector says which way it was chosen");
+    ok(&mut h);
+    assert!(near(sketch_plane(&h).origin, Vec3::new(0.0, 0.0, 20.0)), "{:?}", sketch_plane(&h));
+}
+
+#[test]
+fn cancelling_a_specifier_dialog_leaves_the_parent_as_it_was_and_the_cross_clears_a_choice() {
     let mut h = advanced();
     open(&mut h);
     pick(&mut h, 0, plane("XZ"));
+    h.frames(4);
+    h.step(&json!({"click":{"handle":"dialog:specify:sketch_plane"}})).unwrap();
+    h.frames(4);
+    h.step(&json!({"widget":"Cancel"})).unwrap();
+    h.frames(4);
+    let d = h.app.dialog.as_ref().unwrap();
+    assert!(matches!(d.kind, crate::dialogs::Kind::Sketch) && h.app.dialog_stack.is_empty());
+    assert_eq!(d.specs[0].id(), "inferred");
+    assert_eq!(d.inputs[0].items, vec![plane("XZ")], "the pick is still there");
+    // Choose a way, then clear it.
+    h.step(&json!({"click":{"handle":"dialog:specify:sketch_plane"}})).unwrap();
+    h.frames(4);
+    {
+        let d = h.app.dialog.as_mut().unwrap();
+        d.inputs[0].items = vec![plane("YZ")];
+    }
     ok(&mut h);
-    assert!(near(sketch_plane(&h).normal(), solidcraft_engine::geom::Plane::XZ.normal()));
+    assert_eq!(h.app.dialog.as_ref().unwrap().specs[0].id(), "plane");
+    h.step(&json!({"click":{"handle":"dialog:clear:sketch_plane"}})).unwrap();
+    h.frames(3);
+    let d = h.app.dialog.as_ref().unwrap();
+    assert_eq!(d.specs[0].id(), "inferred");
+    assert!(d.inputs[0].items.is_empty(), "the selector is empty again");
+}
+
+#[test]
+fn the_dialog_is_recycled_for_axes_and_points_and_by_other_dialogs() {
+    let mut h = advanced();
+    open(&mut h);
+    h.step(&json!({"click":{"handle":"dialog:specify:sketch_direction"}})).unwrap();
+    h.frames(4);
+    assert!(h.widget("AXIS").is_some());
+    h.app.dialog = h.app.dialog_stack.pop();
+    h.frames(4);
+    h.step(&json!({"click":{"handle":"dialog:specify:sketch_origin"}})).unwrap();
+    h.frames(4);
+    assert!(h.widget("POINT").is_some());
+    // Extrude's direction opens the same dialog.
+    let mut h = advanced();
+    h.app.run("sketch.create", json!({"plane":"XY","name":"Base"})).unwrap();
+    h.app.run("sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[20,10]})).unwrap();
+    h.app.run("sketch.finish", json!({})).unwrap();
+    h.app.start("solid.extrude");
+    h.frames(6);
+    h.step(&json!({"click":{"handle":"dialog:specify:extrude_direction"}})).unwrap();
+    h.frames(4);
+    assert!(h.widget("AXIS").is_some(), "the same dialog");
+    // Esc closes it back to the extrude.
+    h.step(&json!({"key":"Escape"})).unwrap();
+    h.frames(4);
+    assert!(matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(crate::dialogs::Kind::Extrude { .. })));
 }
 
 #[test]

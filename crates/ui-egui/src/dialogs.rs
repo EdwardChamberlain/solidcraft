@@ -35,6 +35,12 @@ const HOLE_LABELS: [&str; 3] = ["Simple", "Counterbore", "Countersink"];
 pub enum Kind {
     /// Pick a plane or planar face; the sketch starts on it at once.
     Sketch,
+    /// A plane, axis or point specifier's own dialog (`specifier::open_sub`): the way to say it
+    /// exactly. OK hands what was chosen back to the dialog under it.
+    Specify {
+        /// Which specifier of the parent dialog it is for.
+        index: usize,
+    },
     Extrude {
         distance: String,
         direction: usize,
@@ -1496,6 +1502,7 @@ pub(crate) fn publish_row(r: &egui::Response) {
 fn title(k: &Kind) -> &'static str {
     match k {
         Kind::Sketch => "CREATE SKETCH",
+        Kind::Specify { .. } => "SPECIFY",
         Kind::Extrude { .. } => "EXTRUDE",
         Kind::Revolve { .. } => "REVOLVE",
         Kind::Fillet { chamfer: false, .. } => "FILLET",
@@ -2383,6 +2390,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         || (matches!(d.kind, Kind::PatternRect { .. }) && d.inputs.first().is_some_and(|i| i.accept == selection::FEATURES));
     // Advanced: every datum dialog is "Datum Plane/Axis/Point", whatever its Type.
     let raw_title = match d.origin.as_deref() {
+        _ if matches!(d.kind, Kind::Specify { .. }) => crate::specifier::sub_title(&d),
         Some("solid.pattern") => "PATTERN",
         Some("sketch.reattach") => "REATTACH SKETCH",
         _ if advanced => crate::dialogs_datum::class_title(&d.kind).unwrap_or_else(|| title(&d.kind)),
@@ -2399,6 +2407,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let valid = match &d.kind {
         Kind::SaveMesh(_) => crate::dialogs_save_mesh::ready(&d.inputs),
         Kind::Sketch if crate::specifier::is_sketch(&d) => sketch_commands(app, &d).is_ok(),
+        Kind::Specify { .. } => crate::specifier::sub_valid(app, &d),
         Kind::SketchModify(crate::sketch_modify_ui::Mod::Corner { .. }) => {
             // Corner dialogs: preview errors are visual only; validation errors from
             // `apply_commands` go to `d.error`. OK stays enabled when the preview fails.
@@ -2516,7 +2525,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     ui.label(tr("dialog.selection_guidance"));
                     ui.end_row();
                 }
-                if crate::specifier::is_sketch(&d) {
+                if matches!(d.kind, Kind::Specify { .. }) {
+                    enter |= crate::specifier::sub_rows(app, &mut d, ui);
+                } else if crate::specifier::is_sketch(&d) {
                     enter |= sketch_specifier_rows(app, &mut d, ui);
                 } else if advanced && matches!(d.kind, Kind::Extrude { .. }) && !d.specs.is_empty() {
                     enter |= crate::dialogs_extrude::rows(app, &mut d, ui);
@@ -2551,6 +2562,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         }
                     }
                     Kind::Extrude { .. } | Kind::Revolve { .. } if advanced && !d.specs.is_empty() => {}
+                    Kind::Specify { .. } => {}
                     Kind::Extrude {
                         distance,
                         direction,
@@ -3473,6 +3485,19 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     if applied && matches!(d.kind, Kind::Text(_) | Kind::TextMove(_)) {
         let _ = app.session.execute("select.clear", &json!({}));
     }
+    // A specifier's own dialog closes back into the dialog under it.
+    if matches!(d.kind, Kind::Specify { .. }) && cancel {
+        crate::specifier::close_sub(app, d, applied);
+        return;
+    }
+    // The icon beside a selector opens that specifier's dialog over this one.
+    if !cancel && let Some(i) = d.specs.iter().position(|s| s.open) {
+        if let Some(spec) = d.specs.get_mut(i) {
+            spec.open = false;
+        }
+        crate::specifier::open_sub(app, d, i);
+        return;
+    }
     if keep && !cancel {
         // The canvas follows Edit Text's fields.
         if let Kind::Text(k) = &mut d.kind {
@@ -3492,6 +3517,15 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
 /// Close the dialog without applying it (Esc, Cancel). An edit puts the timeline marker back.
 pub fn cancel(app: &mut SolveApp) {
     app.applying = None;
+    // A specifier's own dialog cancels back into the dialog under it.
+    if app.dialog.as_ref().is_some_and(|d| matches!(d.kind, Kind::Specify { .. }))
+        && !app.dialog_stack.is_empty()
+        && let Some(sub) = app.dialog.take()
+    {
+        crate::specifier::close_sub(app, sub, false);
+        return;
+    }
+    app.dialog_stack.clear();
     if let Some(mut d) = app.dialog.take() {
         crate::dialogs_motion::closed(app, &mut d, false);
         if let Kind::Text(k) = &mut d.kind {
@@ -3926,6 +3960,9 @@ fn sels(d: &Dialog, i: usize) -> &[Sel] {
 }
 
 pub(crate) fn run_dialog(app: &mut SolveApp, d: &Dialog) -> Result<(), String> {
+    if matches!(d.kind, Kind::Specify { .. }) {
+        return Ok(());
+    }
     if let Kind::ViewDxf { dashed, tolerance } = &d.kind {
         return crate::dialogs_view_dxf::run(app, *dashed, *tolerance);
     }
@@ -4710,7 +4747,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::EditParam { name, expr } => ("parameters.change", json!({"name": name, "expression": expr})),
         Kind::Rename { feature, name } => ("timeline.rename", json!({"feature": feature, "name": name})),
         Kind::ConfirmDelete { features, .. } => ("timeline.delete", json!({ "features": features })),
-        Kind::Sketch | Kind::Params { .. } | Kind::Measure { .. } => return Ok(Vec::new()),
+        Kind::Sketch | Kind::Specify { .. } | Kind::Params { .. } | Kind::Measure { .. } => return Ok(Vec::new()),
         Kind::Assembly(k) => return crate::dialogs_assembly::commands(app, k, &d.inputs),
         Kind::Sheet(k) => return crate::dialogs_sheet::commands(app, k, &d.inputs, &d.extra),
         Kind::Surface(k) => return crate::dialogs_surface::commands(app, k, &d.inputs, &d.extra),

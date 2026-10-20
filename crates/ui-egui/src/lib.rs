@@ -337,6 +337,9 @@ pub struct SolveApp {
     pub render_workspace: render_workspace::State,
     pub tool: Option<tools::Tool>,
     pub dialog: Option<dialogs::Dialog>,
+    /// Dialogs waiting under the one open: a specifier's own dialog is opened over the dialog
+    /// that needs a plane, an axis or a point, and returns to it.
+    pub dialog_stack: Vec<dialogs::Dialog>,
     /// The Change Parameters window, when open.
     pub params: Option<params_dialog::ParamsDialog>,
     /// The Design Properties window, when open.
@@ -474,6 +477,7 @@ impl SolveApp {
             render_workspace,
             tool: None,
             dialog: None,
+            dialog_stack: Vec::new(),
             params: None,
             design_properties: None,
             material_card_review: None,
@@ -929,6 +933,7 @@ impl SolveApp {
         }
         if let Some(mut d) = dialogs::Dialog::for_command(self, id) {
             d.origin = Some(id.to_string());
+            self.dialog_stack.clear();
             // The pre-selection now belongs to the dialog's inputs.
             if d.wants_picks() && !self.session.selection.is_empty() {
                 let _ = self.session.execute("select.clear", &json!({}));

@@ -16,8 +16,8 @@ use solidcraft_engine::geom::Vec3;
 use crate::SolveApp;
 use crate::dialogs::{self, Dialog, FROM_OBJECT, Kind, OP_LABELS, TWO_SIDES, field, row_label, section};
 
-const START_TYPES: [&str; 4] = ["Value", "Value (Other Side)", "Symmetric Value", "Until Selected"];
-const END_TYPES: [&str; 3] = ["Value", "Until Selected", "Through All"];
+const START_TYPES: [&str; 3] = ["Value", "Value (Other Side)", "Until Selected"];
+const END_TYPES: [&str; 5] = ["Value", "Value from Start", "Symmetric Value", "Until Selected", "Through All"];
 const OFFSET_TYPES: [&str; 5] = ["None", "Symmetric", "Inside", "Outside", "Two-Sided"];
 
 /// The way the profile faces: the normal of the sketch of the first pick (or of a planar face).
@@ -121,89 +121,157 @@ pub fn rows(app: &SolveApp, d: &mut Dialog, ui: &mut Ui) -> bool {
     enter
 }
 
+/// A length as the dialog writes one it worked out.
+fn mm(v: f64) -> String {
+    format!("{} mm", format!("{v:.6}").trim_end_matches('0').trim_end_matches('.'))
+}
+
+/// The distance from the start that reaches `end` (measured from the profile plane) when the start
+/// is `start` along the normal.
+fn from_start(app: &SolveApp, end: &str, start: &str) -> String {
+    if start.trim().is_empty() {
+        return end.to_string();
+    }
+    let length = solidcraft_engine::doc::expr::Kind::Length;
+    match (app.session.doc.eval(end, length), app.session.doc.eval(start, length)) {
+        (Ok(e), Ok(s)) => mm(e - s),
+        _ => format!("({end}) - ({start})"),
+    }
+}
+
+/// The end, measured from the profile plane, that a distance from the start reaches.
+fn from_plane(app: &SolveApp, distance: &str, start: &str) -> String {
+    if start.trim().is_empty() {
+        return distance.to_string();
+    }
+    let length = solidcraft_engine::doc::expr::Kind::Length;
+    match (app.session.doc.eval(distance, length), app.session.doc.eval(start, length)) {
+        (Ok(d), Ok(s)) => mm(d + s),
+        _ => format!("({distance}) + ({start})"),
+    }
+}
+
 /// Start and End, each a type and a distance.
 fn limits(app: &SolveApp, d: &mut Dialog, ui: &mut Ui) -> bool {
     let mut enter = false;
     let from_object = dialogs::object_on(&d.inputs, FROM_OBJECT);
     let to_object = dialogs::to_object_on(&d.inputs);
-    let Kind::Extrude { direction, start, distance, distance2, to_offset, all, smart, auto_op, .. } = &mut d.kind else { return false };
+    let Kind::Extrude { direction, start, distance, distance2, to_offset, all, plane_end, smart, auto_op, .. } = &mut d.kind else { return false };
 
-    // Start.
-    let current = if from_object {
+    // The End as the dialog stands.
+    let end_now = if to_object {
         3
+    } else if *all {
+        4
     } else if *direction == 2 {
+        2
+    } else if plane_end.is_some() {
+        0
+    } else {
+        1
+    };
+
+    // Start: where the extrude begins. Not for a symmetric one, which has no start of its own.
+    let mut to_from_object = from_object;
+    let mut start_type = if from_object {
         2
     } else if *direction == TWO_SIDES {
         1
     } else {
         0
     };
-    let mut picked = current;
-    row_label(ui, "Start");
-    dialogs::combo(ui, "ex_start_type", &START_TYPES, &mut picked);
-    ui.end_row();
-    let mut to_from_object = from_object;
-    if picked != current {
-        let reverse = *direction == 1;
-        *direction = match picked {
-            1 => TWO_SIDES,
-            2 => 2,
-            _ => usize::from(reverse),
-        };
-        if picked == 2 {
-            start.clear();
-            d.extra.insert("convention".into(), json!(solidcraft_engine::doc::ExtrudeConvention::TotalDistance));
+    if end_now != 2 {
+        let current = start_type;
+        row_label(ui, "Start");
+        dialogs::combo(ui, "ex_start_type", &START_TYPES, &mut start_type);
+        ui.end_row();
+        if start_type != current {
+            let reverse = *direction == 1;
+            *direction = if start_type == 1 { TWO_SIDES } else { usize::from(reverse) };
+            to_from_object = start_type == 2;
+            smart.manual_dir = true;
+            *auto_op = false;
         }
-        to_from_object = picked == 3;
+        match start_type {
+            0 => {
+                row_label(ui, "Distance");
+                enter |= field(ui, start);
+                ui.end_row();
+            }
+            1 => {
+                row_label(ui, "Distance");
+                enter |= field(ui, distance2);
+                ui.end_row();
+            }
+            _ => {}
+        }
+    }
+
+    // End.
+    let mut end = end_now;
+    row_label(ui, "End");
+    dialogs::combo(ui, "ex_end_type", &END_TYPES, &mut end);
+    ui.end_row();
+    if end != end_now {
+        *all = end == 4;
+        match end {
+            0 => *plane_end = Some((from_plane(app, distance, start), distance.clone())),
+            _ => *plane_end = None,
+        }
+        if end == 2 {
+            *direction = 2;
+            start.clear();
+            to_from_object = false;
+            d.extra.insert("convention".into(), json!(solidcraft_engine::doc::ExtrudeConvention::TotalDistance));
+        } else if *direction == 2 {
+            *direction = 0;
+        }
         smart.manual_dir = true;
         *auto_op = false;
     }
-    match picked {
-        0 | 3 => {
-            row_label(ui, "Distance");
-            if picked == 0 {
-                enter |= field(ui, start);
-            } else {
-                ui.label(egui::RichText::new(crate::i18n::tr("dialog.select")).color(crate::theme::Tokens::get().text_dim));
+    match end {
+        0 => {
+            // Measured from the profile plane: what was typed, and the distance from the start it
+            // comes to. The distance changing by itself (a drag on the canvas) is read back.
+            if let Some((typed, made)) = plane_end.as_mut() {
+                if made != distance {
+                    *typed = from_plane(app, distance, start);
+                    made.clone_from(distance);
+                } else {
+                    let want = from_start(app, typed, start);
+                    if want != *distance {
+                        distance.clone_from(&want);
+                        *made = want;
+                    }
+                }
+                row_label(ui, "Distance");
+                if field(ui, typed) {
+                    enter = true;
+                }
+                let want = from_start(app, typed, start);
+                if want != *distance {
+                    distance.clone_from(&want);
+                    *made = want;
+                }
+                ui.end_row();
             }
+        }
+        1 | 2 => {
+            row_label(ui, if end == 2 { "Distance (total)" } else { "Distance" });
+            enter |= field(ui, distance);
             ui.end_row();
         }
-        1 => {
-            row_label(ui, "Distance");
-            enter |= field(ui, distance2);
+        3 => {
+            row_label(ui, "Offset");
+            enter |= field(ui, to_offset);
             ui.end_row();
         }
         _ => {}
     }
-
-    // End.
-    let current = if to_object {
-        1
-    } else if *all {
-        2
-    } else {
-        0
-    };
-    let mut end = current;
-    row_label(ui, "End");
-    dialogs::combo(ui, "ex_end_type", &END_TYPES, &mut end);
-    ui.end_row();
-    *all = end == 2;
-    if end == 0 {
-        row_label(ui, if picked == 2 { "Distance (total)" } else { "Distance" });
-        enter |= field(ui, distance);
-        ui.end_row();
-    }
-    if end == 1 {
-        row_label(ui, "Offset");
-        enter |= field(ui, to_offset);
-        ui.end_row();
-    }
     dialogs::set_object(&mut d.inputs, &mut d.active, FROM_OBJECT, to_from_object);
-    dialogs::set_to_object(&mut d.inputs, &mut d.active, end == 1);
+    dialogs::set_to_object(&mut d.inputs, &mut d.active, end == 3);
     // The picks of an Until Selected sit with their limit.
-    for (k, label) in [(0usize, FROM_OBJECT), (1, dialogs::TO_OBJECT)] {
-        let wanted = if k == 0 { to_from_object } else { end == 1 };
+    for (label, wanted) in [(FROM_OBJECT, to_from_object), (dialogs::TO_OBJECT, end == 3)] {
         if wanted && let Some(at) = d.inputs.iter().position(|i| i.label == label) {
             dialogs::input_rows_range(d, ui, &app.session, at..at + 1);
         }

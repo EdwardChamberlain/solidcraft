@@ -150,3 +150,77 @@ fn the_start_and_end_choices_work_through_the_dialog() {
     h.frames(4);
     assert!(matches!(h.app.dialog.as_ref().unwrap().kind, Kind::Extrude { thin: true, wall_side: 2, .. }));
 }
+
+fn extrude(h: &Harness) -> (String, String, Option<(String, String)>) {
+    match &h.app.dialog.as_ref().unwrap().kind {
+        Kind::Extrude { distance, start, plane_end, .. } => (distance.clone(), start.clone(), plane_end.clone()),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn the_end_value_is_measured_from_the_sketch_plane_and_value_from_start_from_the_start() {
+    let mut h = open(ModellingApproach::Advanced);
+    // Value, measured from the sketch plane: 10 mm there, with the start 4 mm up, is 6 from the start.
+    h.step(&json!({"click":{"handle":"dialog:Start:Value"}})).ok();
+    if let Some(Kind::Extrude { start, .. }) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+        *start = "4 mm".into();
+    }
+    h.frames(4);
+    let (distance, start, plane_end) = extrude(&h);
+    assert_eq!((distance.as_str(), start.as_str()), ("6 mm", "4 mm"));
+    assert_eq!(plane_end.map(|p| p.0), Some("10 mm".to_string()), "what is shown is still the value from the plane");
+    let p = params(&h);
+    assert_eq!((p["distance"].clone(), p["start_offset"].clone()), (json!("6 mm"), json!("4 mm")));
+
+    // Value from Start: the number is the length from the start, as the command's distance.
+    h.step(&json!({"click":{"handle":"dialog:End"}})).unwrap();
+    h.step(&json!({"click":{"handle":"dialog:End:Value from Start"}})).unwrap();
+    h.frames(4);
+    let (distance, _, plane_end) = extrude(&h);
+    assert_eq!((distance.as_str(), plane_end), ("6 mm", None));
+    if let Some(Kind::Extrude { distance, .. }) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+        *distance = "20 mm".into();
+    }
+    h.frames(3);
+    assert_eq!(params(&h)["distance"], "20 mm");
+
+    // Back to Value: the length from the start becomes the end from the plane.
+    h.step(&json!({"click":{"handle":"dialog:End"}})).unwrap();
+    h.step(&json!({"click":{"handle":"dialog:End:Value"}})).unwrap();
+    h.frames(4);
+    let (distance, _, plane_end) = extrude(&h);
+    assert_eq!((distance.as_str(), plane_end.map(|p| p.0)), ("20 mm", Some("24 mm".to_string())));
+}
+
+#[test]
+fn a_distance_changed_elsewhere_is_read_back_into_the_end_value() {
+    let mut h = open(ModellingApproach::Advanced);
+    if let Some(Kind::Extrude { start, .. }) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+        *start = "2 mm".into();
+    }
+    h.frames(3);
+    // A drag on the canvas changes the distance itself.
+    if let Some(Kind::Extrude { distance, .. }) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+        *distance = "13 mm".into();
+    }
+    h.frames(3);
+    let (distance, _, plane_end) = extrude(&h);
+    assert_eq!((distance.as_str(), plane_end.map(|p| p.0)), ("13 mm", Some("15 mm".to_string())));
+}
+
+#[test]
+fn symmetric_is_an_end_not_a_start() {
+    let mut h = open(ModellingApproach::Advanced);
+    h.step(&json!({"click":{"handle":"dialog:Start"}})).unwrap();
+    assert!(crate::scenario::handle_at("dialog:Start:Symmetric Value").is_none(), "the Start has no Symmetric Value");
+    assert!(crate::scenario::handle_at("dialog:Start:Value (Other Side)").is_some());
+    h.step(&json!({"click":{"handle":"dialog:Start:Value"}})).unwrap();
+    h.step(&json!({"click":{"handle":"dialog:End"}})).unwrap();
+    h.step(&json!({"click":{"handle":"dialog:End:Symmetric Value"}})).unwrap();
+    h.frames(4);
+    let p = params(&h);
+    assert_eq!(p["direction"], "symmetric");
+    assert!(p.get("start_offset").is_none(), "a symmetric extrude has no start offset");
+    assert!(h.widget("Start").is_none(), "and no Start to choose");
+}

@@ -54,6 +54,10 @@ pub enum Kind {
         to_offset: String,
         /// Start offset from the profile plane (empty: start on the profile plane).
         start: String,
+        /// The Advanced End "Value", measured from the profile plane: what was typed, and the
+        /// `distance` it made (the distance is measured from the start, so it is the typed value
+        /// less the start offset). `None` while the End is measured from the start.
+        plane_end: Option<(String, String)>,
         /// Extent type All (through everything) instead of a distance.
         all: bool,
         /// Thin Extrude: a wall along the picked curves (or profiles' outlines).
@@ -521,6 +525,7 @@ impl Dialog {
                     taper_present: false,
                     to_offset: String::new(),
                     start: String::new(),
+                    plane_end: Some(("10 mm".into(), "10 mm".into())),
                     all: false,
                     thin: false,
                     wall: "2 mm".into(),
@@ -2561,6 +2566,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         taper_present,
                         to_offset,
                         start,
+                        plane_end: _,
                         all,
                         thin,
                         wall,
@@ -5088,6 +5094,8 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 taper_present: extent.taper.is_some(),
                 to_offset: extent.to_offset.as_deref().map(str::to_string).unwrap_or_default(),
                 start: extent.start_offset.as_deref().map(str::to_string).unwrap_or_default(),
+                // An extrude with a start offset keeps measuring from its start.
+                plane_end: extent.start_offset.is_none().then(|| (extent.distance.to_string(), extent.distance.to_string())),
                 all: extent.through_all,
                 thin: thin.is_some(),
                 wall: thin.as_ref().map_or_else(|| "2 mm".into(), |t| t.thickness.to_string()),

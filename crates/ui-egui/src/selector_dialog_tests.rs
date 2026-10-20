@@ -119,18 +119,116 @@ fn the_other_advanced_dialogs_have_a_selection_and_a_settings_group_and_classic_
         h.frames(4);
         ["selection", "settings"].map(|g| crate::scenario::handle_at(&format!("dialog:group:{g}")).is_some())
     };
-    for command in [
-        "solid.shell",
-        "solid.rib",
-        "solid.sweep",
-        "solid.loft",
-        "solid.combine",
-        "solid.thread",
-        "solid.scale",
-        "solid.offset_face",
-        "solid.pattern.circular",
-    ] {
+    for command in ["solid.shell", "solid.rib", "solid.sweep", "solid.loft", "solid.combine", "solid.thread", "solid.scale", "solid.offset_face"] {
         assert_eq!(groups(ModellingApproach::Advanced, command), [true, true], "{command}");
         assert_eq!(groups(ModellingApproach::Classic, command), [false, false], "{command}");
     }
+}
+
+fn axis(name: &str) -> Sel {
+    Sel::Axis { name: name.into() }
+}
+
+#[test]
+fn a_linear_patterns_directions_are_selector_rows_and_a_features_pattern_keeps_plain_inputs() {
+    let mut h = part(ModellingApproach::Advanced);
+    h.app.start("solid.pattern");
+    h.frames(4);
+    let d = h.app.dialog.as_ref().unwrap();
+    assert_eq!(d.specs.len(), 2, "two directions");
+    assert_eq!(d.inputs.len(), 3);
+    for g in ["pattern_objects", "pattern_direction", "pattern_direction2", "settings"] {
+        assert!(crate::scenario::handle_at(&format!("dialog:group:{g}")).is_some(), "{g}");
+    }
+    assert!(crate::scenario::handle_at("dialog:specify:pattern_direction_selector").is_some());
+    assert!(apply_commands(&h.app, d).is_err(), "no object, no direction");
+    {
+        let d = h.app.dialog.as_mut().unwrap();
+        d.inputs[0].items = vec![Sel::Body { name: "Block".into() }];
+    }
+    let err = apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap_err();
+    assert!(err.contains("direction"), "{err}");
+    {
+        let d = h.app.dialog.as_mut().unwrap();
+        d.inputs[1].items = vec![axis("Y")];
+    }
+    let c = apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap();
+    assert_eq!(c[0].0, "solid.pattern.rectangular");
+    assert_eq!(c[0].1["dir1"], json!([0.0, 1.0, 0.0]));
+    assert!(c[0].1.get("dir2").is_none(), "the second direction is optional");
+    // Reverse turns it round; a second direction adds the second set.
+    {
+        let d = h.app.dialog.as_mut().unwrap();
+        d.specs[0].reverse = true;
+        d.inputs[2].items = vec![axis("Z")];
+    }
+    let c = apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap();
+    assert_eq!((c[0].1["dir1"].clone(), c[0].1["dir2"].clone()), (json!([0.0, -1.0, 0.0]), json!([0.0, 0.0, 1.0])));
+    // Features: plain inputs again, and back to bodies the selector rows.
+    {
+        let mut d = h.app.dialog.take().unwrap();
+        d.inputs[0].accept = crate::selection::FEATURES;
+        crate::dialogs_selectors::plain_pattern(&h.app, &mut d);
+        assert!(d.specs.is_empty() && d.inputs.len() == 3, "{:?}", d.inputs.len());
+        assert_eq!(d.inputs[1].items, vec![axis("Y")], "the pick stays");
+        d.inputs[0].accept = crate::selection::BODIES;
+        crate::dialogs_selectors::convert_pattern(&h.app, &mut d);
+        assert_eq!(d.specs.len(), 2);
+        assert_eq!(d.inputs[1].items, vec![axis("Y")], "and again");
+    }
+    let mut c = part(ModellingApproach::Classic);
+    c.app.start("solid.pattern");
+    c.frames(4);
+    assert!(c.app.dialog.as_ref().unwrap().specs.is_empty(), "Classic keeps its inputs");
+}
+
+#[test]
+fn a_circular_patterns_axis_is_a_selector_row() {
+    let mut h = part(ModellingApproach::Advanced);
+    h.app.start("solid.pattern.circular");
+    h.frames(4);
+    assert_eq!(h.app.dialog.as_ref().unwrap().specs.len(), 1);
+    for g in ["pattern_objects", "pattern_axis", "settings"] {
+        assert!(crate::scenario::handle_at(&format!("dialog:group:{g}")).is_some(), "{g}");
+    }
+    {
+        let d = h.app.dialog.as_mut().unwrap();
+        d.inputs[0].items = vec![Sel::Body { name: "Block".into() }];
+        d.inputs[1].items = vec![axis("Z")];
+    }
+    let c = apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap();
+    assert_eq!(c[0].0, "solid.pattern.circular");
+    assert_eq!(c[0].1["axis"]["dir"], json!([0.0, 0.0, 1.0]));
+}
+
+#[test]
+fn a_sections_plane_is_a_selector_row() {
+    let mut h = part(ModellingApproach::Advanced);
+    h.app.start("inspect.section");
+    h.frames(4);
+    assert_eq!(h.app.dialog.as_ref().unwrap().specs.len(), 1);
+    for g in ["section_plane", "settings"] {
+        assert!(crate::scenario::handle_at(&format!("dialog:group:{g}")).is_some(), "{g}");
+    }
+    assert!(apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).is_err());
+    h.app.dialog.as_mut().unwrap().inputs[0].items = vec![plane("XZ")];
+    let c = apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap();
+    assert_eq!((c[0].0.as_str(), c[0].1["plane"].clone()), ("inspect.section", json!("XZ")));
+}
+
+#[test]
+fn to_object_takes_a_sketch_point_as_the_place() {
+    let mut h = part(ModellingApproach::Advanced);
+    let sketch = h.app.run("sketch.create", json!({"plane": "XY", "name": "Marks"})).unwrap()["sketch"].as_u64().unwrap();
+    let p = h.app.run("sketch.point", json!({"point": [3, 4]})).unwrap();
+    let id = p["created"]["points"][0].as_str().unwrap().to_string();
+    h.app.run("sketch.finish", json!({})).unwrap();
+    h.frames(4);
+    let accept = crate::dialogs_specify::POINT;
+    assert!(accept & crate::selection::SKETCH_POINTS != 0);
+    let sel = Sel::SketchPoint { id: format!("{sketch}:{id}") };
+    let mut probe = crate::selection::SelInput::new(crate::dialogs::TO_OBJECT, accept, false);
+    probe.items = vec![sel];
+    let at = crate::dialogs::object_point(&h.app, &[probe], crate::dialogs::TO_OBJECT).expect("a place");
+    assert_eq!(at, json!([3.0, 4.0, 0.0]));
 }

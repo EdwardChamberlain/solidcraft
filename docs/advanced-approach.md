@@ -123,5 +123,5 @@ through linked parts: the mate follows the face when the part changes shape.
   linking to it): the context is drawn but is not pickable.
 - A shared evaluation between a part open in a tab and the same part linked in an assembly.
 - Mates that remove all remaining freedom except by stacking them (each mate is one joint: the part still slides along the face).
-- The linear pattern's direction pickers, the circular pattern's axis and Section's plane are still plain inputs (the feature pattern's own layout and the commands' parameters need more than the selector rows give), and Specify Point does not take a sketch point.
+- Specify Point (the To Object and From Object places) takes a sketch point; a pattern of features keeps plain direction and axis inputs (its layout needs more than the selector rows give).
 - Drawings and direct face editing are out of scope for this approach.

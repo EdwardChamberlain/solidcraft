@@ -193,7 +193,7 @@ pub(crate) fn profile_plane(app: &SolveApp, sketch: u64) -> Option<solidcraft_en
 }
 
 fn reference_height(app: &SolveApp, d: &Dialog, label: &str, plane: &solidcraft_engine::geom::Plane, centre: Vec3) -> Option<f64> {
-    let point = crate::dialogs::object_point(&d.inputs, label)?;
+    let point = crate::dialogs::object_point(app, &d.inputs, label)?;
     let p = point.as_array()?;
     let p = Vec3::new(p.first()?.as_f64()?, p.get(1)?.as_f64()?, p.get(2)?.as_f64()?);
     Some(solidcraft_engine::doc::object_height(&app.session.world_state(), plane, centre, p))
@@ -1186,7 +1186,7 @@ fn revolve_display_extent(app: &SolveApp, d: &Dialog, axis: (Vec3, Vec3)) -> Opt
     let plane = profile_plane(app, *sketch)?;
     let to_mode = d.inputs.iter().any(|input| input.label == "To Object");
     let to = if to_mode {
-        let point = crate::dialogs::object_point(&d.inputs, "To Object")?;
+        let point = crate::dialogs::object_point(app, &d.inputs, "To Object")?;
         Some(Vec3::new(point.get(0)?.as_f64()?, point.get(1)?.as_f64()?, point.get(2)?.as_f64()?))
     } else {
         None

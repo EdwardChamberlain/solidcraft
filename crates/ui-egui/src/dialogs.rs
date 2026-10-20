@@ -801,6 +801,13 @@ impl Dialog {
         if matches!(id, "solid.mirror" | "solid.draft") && app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced {
             crate::specifier::convert_input(app, &mut d, 1, crate::specifier::Specifier::new(crate::specifier::Class::Plane, 0));
         }
+        // Advanced: a section's plane, and a pattern's directions and axis, are selector rows.
+        if id == "inspect.section" && app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced {
+            crate::specifier::convert_input(app, &mut d, 0, crate::specifier::Specifier::new(crate::specifier::Class::Plane, 0));
+        }
+        if matches!(id, "solid.pattern" | "solid.pattern.rectangular" | "solid.pattern.circular") {
+            crate::dialogs_selectors::convert_pattern(app, &mut d);
+        }
         // Advanced: a revolve's axis is a vector, with a point on it.
         if id == "solid.revolve" && app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced {
             use crate::specifier::{Class, Specifier, add};
@@ -1752,7 +1759,7 @@ fn grouped_kind(d: &Dialog) -> bool {
 
 /// The Object Type row of a pattern: bodies (picked in the view) or features (picked in the
 /// timeline, e.g. a hole).
-fn object_type_row(d: &mut Dialog, ui: &mut egui::Ui) {
+fn object_type_row(app: &SolveApp, d: &mut Dialog, ui: &mut egui::Ui) {
     let Some(inp) = d.inputs.first_mut() else { return };
     row_label(ui, "Object Type");
     let cur = usize::from(inp.accept == selection::FEATURES);
@@ -1764,14 +1771,23 @@ fn object_type_row(d: &mut Dialog, ui: &mut egui::Ui) {
         inp.label = objects_label(inp.accept);
         inp.items.clear();
         d.active = 0;
+        // Patterns of bodies have selector rows for their direction or axis; patterns of features
+        // keep their own layout.
+        if matches!(d.kind, Kind::PatternRect { .. } | Kind::PatternCirc { .. }) {
+            if ty == 1 {
+                crate::dialogs_selectors::plain_pattern(app, d);
+            } else {
+                crate::dialogs_selectors::convert_pattern(app, d);
+            }
+        }
     }
 }
 
 /// Rows above the selection inputs: the pattern type and object type, the Hole placement (one
 /// face point, or sketch points).
-fn placement_row(d: &mut Dialog, ui: &mut egui::Ui, vector: Accept) {
+fn placement_row(app: &SolveApp, d: &mut Dialog, ui: &mut egui::Ui, vector: Accept) {
     if matches!(d.kind, Kind::Mirror) {
-        object_type_row(d, ui);
+        object_type_row(app, d, ui);
         return;
     }
     if matches!(d.kind, Kind::Move { .. }) {
@@ -1820,10 +1836,12 @@ fn placement_row(d: &mut Dialog, ui: &mut egui::Ui, vector: Accept) {
             }
             d.kind = kind;
             d.inputs = inputs;
+            d.specs.clear();
             d.extra.clear();
+            crate::dialogs_selectors::convert_pattern(app, d);
             d.advance();
         }
-        object_type_row(d, ui);
+        object_type_row(app, d, ui);
         return;
     }
     let Kind::Hole { opts, .. } = &mut d.kind else { return };
@@ -1976,7 +1994,7 @@ pub(crate) fn input_rows_range_with(
 }
 
 /// Each live reference sits with the independent values it drives.
-fn rectangular_pattern_rows(d: &mut Dialog, ui: &mut egui::Ui, session: &Session) -> bool {
+fn rectangular_pattern_rows(app: &SolveApp, d: &mut Dialog, ui: &mut egui::Ui, session: &Session) -> bool {
     use crate::sketch_modify_ui::Mod;
     use solidcraft_engine::sketch::PatternAlignment;
     let mut enter = false;
@@ -1984,7 +2002,7 @@ fn rectangular_pattern_rows(d: &mut Dialog, ui: &mut egui::Ui, session: &Session
         ui.label(tr("dialog.selection_guidance"));
         egui::Grid::new("pattern_source").spacing(vec2(10.0, 8.0)).show(ui, |ui| {
             if matches!(d.kind, Kind::PatternRect { .. }) {
-                placement_row(d, ui, AXES | EDGES);
+                placement_row(app, d, ui, AXES | EDGES);
             }
             input_rows_range(d, ui, session, 0..1);
         });
@@ -2530,14 +2548,14 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             }
             egui::Grid::new("sc_dialog_grid").num_columns(if pattern_columns { 1 } else { 2 }).spacing(vec2(10.0, 8.0)).show(ui, |ui| {
                 if pattern_columns {
-                    enter |= rectangular_pattern_rows(&mut d, ui, &app.session);
+                    enter |= rectangular_pattern_rows(app, &mut d, ui, &app.session);
                     error_rows(app, ctx, &mut d, ui, true);
                     return;
                 }
                 if matches!(&d.kind, Kind::Motion(crate::dialogs_motion::Mo::Configurations { .. })) {
                     return;
                 }
-                placement_row(&mut d, ui, crate::dialogs_specify::accept(app));
+                placement_row(app, &mut d, ui, crate::dialogs_specify::accept(app));
                 if advanced {
                     crate::dialogs_datum::type_row(app, &mut d, ui);
                 }
@@ -2559,7 +2577,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     ui.end_row();
                 }
                 // The Advanced dialogs without a layout of their own: a Selection and a Settings group.
-                let grouped = advanced && grouped_kind(&d);
+                // The selector-row dialogs whose values follow the rows get a Settings group too.
+                let value_rows =
+                    advanced && !d.specs.is_empty() && matches!(d.kind, Kind::Section { .. } | Kind::PatternRect { .. } | Kind::PatternCirc { .. });
+                let grouped = advanced && (grouped_kind(&d) || value_rows);
                 let mut settings_open = true;
                 if matches!(d.kind, Kind::Specify { .. }) {
                     enter |= crate::specifier::sub_rows(app, &mut d, ui);
@@ -2569,6 +2590,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     enter |= crate::dialogs_extrude::rows(app, &mut d, ui);
                 } else if crate::dialogs_selectors::applies(app, &d) {
                     enter |= crate::dialogs_selectors::rows(app, &mut d, ui);
+                    if value_rows {
+                        settings_open = section(ui, "settings", "Settings", true);
+                    }
                 } else if advanced && matches!(d.kind, Kind::Revolve { .. }) && !d.specs.is_empty() {
                     enter |= crate::dialogs_revolve::rows(app, &mut d, ui);
                 } else if grouped {
@@ -3631,14 +3655,15 @@ pub(crate) fn set_object(inputs: &mut Vec<SelInput>, active: &mut usize, label: 
 }
 
 /// The picked To Object place.
-fn to_object_point(inputs: &[SelInput]) -> Option<Value> {
-    object_point(inputs, TO_OBJECT)
+fn to_object_point(app: &SolveApp, inputs: &[SelInput]) -> Option<Value> {
+    object_point(app, inputs, TO_OBJECT)
 }
 
-pub(crate) fn object_point(inputs: &[SelInput], label: &str) -> Option<Value> {
+pub(crate) fn object_point(app: &SolveApp, inputs: &[SelInput], label: &str) -> Option<Value> {
     inputs.iter().find(|i| i.label == label)?.items.first().and_then(|x| match x {
         Sel::Face { point, .. } | Sel::Vertex { point, .. } | Sel::Edge { point, .. } => Some(pt(*point)),
-        _ => None,
+        // A sketch point or a construction point is a place too.
+        other => crate::specifier::point_of(app, other).map(pt),
     })
 }
 
@@ -4208,13 +4233,13 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                 common["through_all"] = json!(true);
             }
             if to_object_on(&d.inputs) {
-                common["to"] = to_object_point(&d.inputs).ok_or("select the object to extrude to")?;
+                common["to"] = to_object_point(app, &d.inputs).ok_or("select the object to extrude to")?;
                 if !to_offset.trim().is_empty() {
                     common["to_offset"] = json!(to_offset);
                 }
             }
             if object_on(&d.inputs, FROM_OBJECT) {
-                common["from"] = object_point(&d.inputs, FROM_OBJECT).ok_or("select the object to extrude from")?;
+                common["from"] = object_point(app, &d.inputs, FROM_OBJECT).ok_or("select the object to extrude from")?;
             }
             let with = |extra: Value| -> Value {
                 let mut p = common.clone();
@@ -4314,7 +4339,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             let mut p =
                 json!({"sketch": sketch, "profiles": idx, "axis": axis, "angle": angle, "operation": OPS.get(*operation).copied().unwrap_or("new")});
             if to_object_on(&d.inputs) {
-                p["to"] = to_object_point(&d.inputs).ok_or("select the object to turn to")?;
+                p["to"] = to_object_point(app, &d.inputs).ok_or("select the object to turn to")?;
             }
             ("solid.revolve", p)
         }
@@ -4421,6 +4446,23 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::PatternRect { count, spacing, count2, spacing2 } => {
             need(0, "objects")?;
             let kept = d.extra.get("dir1").and_then(|v| serde_json::from_value::<[f64; 3]>(v.clone()).ok()).map(|a| Vec3::new(a[0], a[1], a[2]));
+            if !d.specs.is_empty() {
+                // Selector rows: the first direction is required unless kept from the edited feature.
+                let d1 = match (crate::specifier::vector(app, d, 0)?, kept) {
+                    (Some(v), _) => v,
+                    (None, Some(k)) => k,
+                    (None, None) => return Err("select a direction (an axis, a sketch line, a straight edge or a planar face) first".into()),
+                };
+                let mut p = json!({"dir1": pt(d1), "count1": count, "spacing1": spacing});
+                pattern_objects(s, sels(d, 0), &mut p);
+                let kept2 = d.extra.get("dir2").and_then(|v| serde_json::from_value::<[f64; 3]>(v.clone()).ok()).map(|a| Vec3::new(a[0], a[1], a[2]));
+                if let Some(d2) = crate::specifier::vector(app, d, 1)?.or(kept2) {
+                    p["dir2"] = pt(d2);
+                    p["count2"] = json!(count2);
+                    p["spacing2"] = json!(spacing2);
+                }
+                return Ok(vec![("solid.pattern.rectangular".into(), p)]);
+            }
             let d1 = match (sels(d, 1).first(), kept) {
                 (Some(x), _) => {
                     crate::dialogs_specify::vector_of(app, x)
@@ -4450,6 +4492,18 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         }
         Kind::PatternCirc { count, angle } => {
             need(0, "objects")?;
+            if !d.specs.is_empty() {
+                let axis = match crate::specifier::line(app, d, 0)? {
+                    Some((o, dir)) => json!({"origin": pt(o), "dir": pt(dir)}),
+                    None => match d.extra.get("axis") {
+                        Some(kept) => kept.clone(),
+                        None => return Err("select an axis".into()),
+                    },
+                };
+                let mut p = json!({"axis": axis, "count": count, "angle": angle});
+                pattern_objects(s, sels(d, 0), &mut p);
+                return Ok(vec![("solid.pattern.circular".into(), p)]);
+            }
             let axis = match sels(d, 1).first() {
                 None if d.extra.contains_key("axis") => d.extra.get("axis").cloned().unwrap_or(Value::Null),
                 Some(Sel::Axis { name }) => json!(name),
@@ -4680,6 +4734,14 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             let name = s.doc.material_names().get(*index).cloned().unwrap_or_else(|| "Default".into());
             ("material.assign", json!({"bodies": body_names(0), "material": name}))
         }
+        Kind::Section { offset, flip } if !d.specs.is_empty() => {
+            let (prefix, plane) = crate::specifier::plane_value(app, d, 0)?;
+            let p = json!({"plane": plane, "offset": offset, "flip": flip});
+            if !prefix.is_empty() {
+                return with_made_plane(d, prefix, "inspect.section", p);
+            }
+            ("inspect.section", p)
+        }
         Kind::Section { offset, flip } => {
             need(0, "a plane or planar face")?;
             let plane = match sels(d, 0).first() {
@@ -4759,7 +4821,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                 params["diameter"] = json!(diameter);
                 params["type"] = json!(ty);
                 if to_object_on(&d.inputs) {
-                    params["to"] = to_object_point(&d.inputs).ok_or("select the object to drill to")?;
+                    params["to"] = to_object_point(app, &d.inputs).ok_or("select the object to drill to")?;
                 } else if !opts.all {
                     params["depth"] = json!(depth);
                 }
@@ -5631,6 +5693,9 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 } else {
                     inp.items = bodies;
                 }
+            }
+            if as_features {
+                crate::dialogs_selectors::plain_pattern(app, &mut d);
             }
             d
         }

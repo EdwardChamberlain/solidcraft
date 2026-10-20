@@ -79,6 +79,7 @@ pub const DATUM_FAMILIES: &[Family] = &[
             "construct.point.center",
             "construct.point.edge_plane",
             "construct.point.along_path",
+            "construct.point.between",
         ],
     },
 ];

@@ -441,3 +441,17 @@ fn a_datum_drop_down_starts_the_dialog_at_that_way() {
     let d = h.app.dialog.as_ref().expect("a dialog");
     assert!(matches!(d.kind, crate::dialogs::Kind::Midplane), "{:?}", d.kind);
 }
+
+#[test]
+fn the_point_drop_down_lists_between_two_points_and_starts_it() {
+    let mut h = advanced();
+    h.frames(6);
+    h.step(&json!({"click":{"handle":"family:Point"}})).unwrap();
+    h.frames(3);
+    assert!(h.widget("Point Between Two Points").is_some(), "the Point drop-down lists the way");
+    h.step(&json!({"widget":"Point Between Two Points"})).unwrap();
+    h.frames(4);
+    let d = h.app.dialog.as_ref().expect("a dialog");
+    let crate::dialogs::Kind::Datum { method, .. } = &d.kind else { panic!("{:?}", d.kind) };
+    assert_eq!(crate::dialogs_datum::METHODS.get(*method).map(|m| m.cmd), Some("construct.point.between"));
+}

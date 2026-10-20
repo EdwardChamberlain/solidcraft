@@ -393,6 +393,7 @@
   "cmd.construct_plane_three_points": "Plane Through Three Points",
   "cmd.construct_plane_two_edges": "Plane Through Two Edges",
   "cmd.construct_point_along_path": "Point Along Path",
+  "cmd.construct_point_between": "Point Between Two Points",
   "cmd.construct_point_center": "Point At Center Of Circle/Sphere/Torus",
   "cmd.construct_point_edge_plane": "Point At Edge And Plane",
   "cmd.construct_point_three_planes": "Point Through Three Planes",

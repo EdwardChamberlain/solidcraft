@@ -67,7 +67,7 @@ fn datum_dialogs_exist_only_in_advanced_and_list_every_method_per_class() {
     let types = crate::dialogs_datum::types(crate::dialogs_datum::Class::Axis);
     assert_eq!(types.len(), 5);
     assert_eq!(crate::dialogs_datum::types(crate::dialogs_datum::Class::Plane).len(), 8);
-    assert_eq!(crate::dialogs_datum::types(crate::dialogs_datum::Class::Point).len(), 6);
+    assert_eq!(crate::dialogs_datum::types(crate::dialogs_datum::Class::Point).len(), 7);
 }
 
 #[test]

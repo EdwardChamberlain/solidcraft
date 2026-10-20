@@ -454,13 +454,13 @@ impl Walk for crate::construct::CsysDef {
 impl Walk for PointDef {
     fn walk_exprs<'a>(&'a self, f: &mut dyn FnMut(ExprItem<'a>)) {
         match self {
-            PointDef::AlongPath { t, .. } => f(("Distance (0 to 1)", t, Kind::Unitless, ExprRole::Input)),
+            PointDef::AlongPath { t, .. } | PointDef::Between { t, .. } => f(("Distance (0 to 1)", t, Kind::Unitless, ExprRole::Input)),
             other => plane_exprs(other.refs(), f),
         }
     }
     fn walk_exprs_mut<'a>(&'a mut self, f: &mut dyn FnMut(ExprItemMut<'a>)) {
         match self {
-            PointDef::AlongPath { t, .. } => f(("Distance (0 to 1)", t, Kind::Unitless, ExprRole::Input)),
+            PointDef::AlongPath { t, .. } | PointDef::Between { t, .. } => f(("Distance (0 to 1)", t, Kind::Unitless, ExprRole::Input)),
             other => plane_exprs_mut(other.refs_mut(), f),
         }
     }

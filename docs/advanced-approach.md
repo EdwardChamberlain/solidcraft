@@ -93,6 +93,15 @@ it into the dialog. A pattern's direction takes an axis, an edge or a planar fac
 See [advanced-approach-files.md](advanced-approach-files.md) for how parts reference parts, what
 is built and what is not yet.
 
+## Face mates
+
+**Mate** (Assembly tab, `mate.create`) positions one component against another from two picked faces.
+Touch puts the faces together (outsides meeting), Align makes them face the same way, Distance is
+Touch with a gap, Concentric lines two round faces up on one axis. A mate is a joint underneath
+(touch, align and distance are planar joints, concentric a cylindrical one), so it is listed,
+edited and driven as one, and its faces are kept by their persistent names, which now reach
+through linked parts: the mate follows the face when the part changes shape.
+
 ## Not built yet
 
 - Snap-point toggles in the selection bar (the sketch tools infer their snaps without toggles) and the connected-curve and face-edge intents.
@@ -100,6 +109,6 @@ is built and what is not yet.
 - Referring to the assembly's geometry from the work part (picking a face of another component, or
   linking to it): the context is drawn but is not pickable.
 - A shared evaluation between a part open in a tab and the same part linked in an assembly.
-- Mates between faces of different parts (assemblies use joints).
+- Mates that remove all remaining freedom (a mate is a planar or cylindrical joint: the part still slides along the face).
 - The linear pattern's direction pickers, the circular pattern's axis and Section's plane are still plain inputs (the feature pattern's own layout and the commands' parameters need more than the selector rows give), and Specify Point does not take a sketch point.
 - Drawings and direct face editing are out of scope for this approach.

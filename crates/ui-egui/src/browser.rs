@@ -1142,6 +1142,37 @@ fn analysis_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize, acts: &mut
     }
 }
 
+/// The Section Analysis as one row of the Advanced tree, while there is one (shown or hidden):
+/// an eye to hide and show it, a double click to edit it, a menu to delete it.
+pub(crate) fn section_row(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
+    if app.session.section.is_some() {
+        // A section made (or remade) while an older one was hidden replaces it, shown.
+        app.tree.hidden_section = None;
+        app.tree.section_hidden = false;
+        app.tree.analysis_hidden = false;
+    }
+    if app.session.section.is_none() && app.tree.hidden_section.is_none() {
+        app.tree.section_hidden = false;
+        app.tree.analysis_hidden = false;
+        return;
+    }
+    let shown = !app.tree.section_hidden;
+    let r = draw_row(
+        ui,
+        ui.id().with("section_analysis_row"),
+        &Row { depth, eye: Some(shown), icon: "section", label: "Section Analysis", dim: !shown, ..Default::default() },
+    );
+    if r.eye {
+        set_section_shown(app, !shown);
+    }
+    if r.double {
+        app.start("inspect.section");
+    }
+    if let Some(p) = r.secondary {
+        crate::context_menu::open_for(app, p, Target::Section);
+    }
+}
+
 /// Show or hide the Section Analysis itself (its eye): a hidden Analysis folder still keeps it
 /// off.
 pub fn set_section_shown(app: &mut SolveApp, shown: bool) {

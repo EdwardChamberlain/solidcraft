@@ -62,7 +62,7 @@ fn advanced_create_sketch_names_the_plane_the_direction_and_the_origin() {
 }
 
 #[test]
-fn clicking_the_plane_is_all_it_takes_when_the_rest_is_left_at_its_defaults() {
+fn picking_the_plane_waits_for_ok_so_the_direction_and_origin_can_still_be_chosen() {
     let mut h = advanced();
     open(&mut h);
     let d = h.app.dialog.as_ref().unwrap();
@@ -70,8 +70,10 @@ fn clicking_the_plane_is_all_it_takes_when_the_rest_is_left_at_its_defaults() {
     assert_eq!(d.specs[2].id(), "origin", "the origin starts at the workpiece origin");
     assert_eq!(d.inputs.len(), 1, "only the plane has anything to pick");
     pick(&mut h, 0, plane("XY"));
-    h.frames(6);
-    assert!(h.app.session.active_sketch.is_some() && h.app.dialog.is_none(), "the click started the sketch");
+    h.frames(8);
+    assert!(h.app.session.active_sketch.is_none() && h.app.dialog.is_some(), "the pick alone does not start the sketch");
+    ok(&mut h);
+    assert!(h.app.session.active_sketch.is_some() && h.app.dialog.is_none());
     let p = sketch_plane(&h);
     assert!(near(p.origin, Vec3::ZERO) && near(p.x, Vec3::X), "{p:?}");
 }
@@ -81,31 +83,21 @@ fn the_defaults_suit_every_plane_the_x_axis_square_to_one_keeps_its_own() {
     let mut h = advanced();
     open(&mut h);
     pick(&mut h, 0, plane("YZ"));
-    h.frames(6);
+    ok(&mut h);
     let p = sketch_plane(&h);
     assert!(near(p.x, solidcraft_engine::geom::Plane::YZ.x) && near(p.origin, Vec3::ZERO), "{p:?}");
 }
 
 #[test]
-fn changing_the_direction_or_origin_first_makes_the_sketch_wait_for_ok() {
+fn a_direction_chosen_after_the_face_is_picked_is_used() {
     let mut h = advanced();
     open(&mut h);
-    choose(&mut h, 1, "edge");
     pick(&mut h, 0, plane("XY"));
     h.frames(6);
-    assert!(h.app.session.active_sketch.is_none() && h.app.dialog.is_some(), "a changed direction waits");
-    h.app.dialog = None;
-    open(&mut h);
-    choose(&mut h, 2, "coords");
-    pick(&mut h, 0, plane("XY"));
-    h.frames(6);
-    assert!(h.app.session.active_sketch.is_none(), "a changed origin waits");
-    h.app.dialog = None;
-    open(&mut h);
-    choose(&mut h, 0, "construct.plane.offset");
-    pick(&mut h, 0, plane("XY"));
-    h.frames(6);
-    assert!(h.app.session.active_sketch.is_none(), "a plane that is made waits for its distance and OK");
+    choose(&mut h, 1, "axis");
+    h.app.dialog.as_mut().unwrap().specs[1].values = vec!["Y".into()];
+    ok(&mut h);
+    assert!(near(sketch_plane(&h).x, Vec3::Y), "{:?}", sketch_plane(&h));
 }
 
 #[test]
@@ -119,7 +111,7 @@ fn the_default_origin_of_a_sketch_on_a_face_is_the_workpiece_origin_projected_on
     open(&mut h);
     let face = crate::dialogs::face_sel(&h.app.session, Vec3::new(15.0, 10.0, 10.0)).expect("the top face");
     pick(&mut h, 0, face);
-    h.frames(6);
+    ok(&mut h);
     let p = sketch_plane(&h);
     assert!(near(p.origin, Vec3::new(0.0, 0.0, 10.0)) && near(p.x, Vec3::X), "{p:?}");
 }

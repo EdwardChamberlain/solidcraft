@@ -91,3 +91,27 @@ fn edit_opens_the_section_dialog() {
     menu(&mut h, "Edit Section Analysis");
     assert!(h.app.dialog.is_some(), "the Section Analysis dialog opens");
 }
+
+#[test]
+fn the_advanced_tree_lists_the_section_analysis_and_its_menu_deletes_it() {
+    let mut h = Harness::new();
+    h.app.home.open = false;
+    h.app.preferences.modelling_approach = crate::prefs::ModellingApproach::Advanced;
+    h.app.ui.show_browser = true;
+    h.app.run("solid.box", json!({"length":20,"width":20,"height":20,"corner":[-10,-10,-10]})).unwrap();
+    h.frames(4);
+    assert!(crate::scenario::handle_at("row:Section Analysis").is_none(), "no section, no row");
+    h.app.run("inspect.section", json!({"plane": "XZ", "offset": 0})).unwrap();
+    h.frames(4);
+    assert!(crate::scenario::handle_at("row:Section Analysis").is_some(), "the section is a row of the tree");
+    click(&mut h, "eye:Section Analysis");
+    assert_eq!(h.app.session.section, None, "its eye hides it");
+    assert!(crate::scenario::handle_at("row:Section Analysis").is_some(), "a hidden section stays in the tree");
+    click(&mut h, "eye:Section Analysis");
+    assert!(h.app.session.section.is_some());
+    menu(&mut h, "Delete");
+    assert_eq!(h.app.session.section, None);
+    assert!(h.app.tree.hidden_section.is_none());
+    h.frames(3);
+    assert!(crate::scenario::handle_at("row:Section Analysis").is_none(), "a deleted section leaves the tree");
+}

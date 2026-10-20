@@ -25,7 +25,7 @@ still in use.
 | Ribbon | **Home** (Feature, Datum, Pattern), **Assembly**, **Analysis**, **View**, **Tools**; **Sketch** appears while a sketch is open. The same commands as Classic, grouped and cut down to a part-modelling set. |
 | Selection bar | The selection filter: what a click in the viewport can pick. |
 | Resource bar | Vertical tabs at the left edge: **Part Navigator** and **Assembly Navigator**. Click the open one to hide it. |
-| Part Navigator | The feature tree: the Origin (planes and axes), then every feature in the order it replays, with the rollback marker. Sketches stay where they were made. Select a feature and its **parents** (what it is built on) show in the warning colour and its **children** (what is built on it) in the addition colour, one step each way. Every row has an **eye** at its left that hides what the feature made: a sketch, a datum, or the body (hiding a chamfer hides the body, so every feature that built it shows as hidden). While a dialog waits for a pick, **clicking a feature in the tree answers it** wherever the input takes what the feature stands for: a pattern's features, a sketch's profiles, a datum plane, axis or point, or the bodies a feature made. A row that the input cannot use is selected as usual. Below the tree, the selected feature's **Dependencies** (its **Parent** features, which it is built on, and its **Child** features, built on it; worked out from the design's references once per change, so selecting a feature is instant) and **Details** (its values, and Edit). |
+| Part Navigator | The feature tree: the Origin (planes and axes), then every feature in the order it replays, with the rollback marker. Sketches stay where they were made. Select a feature and its **parents** (what it is built on) show in the warning colour and its **children** (what is built on it) in the addition colour, one step each way. Every row has an **eye** at its left that hides what the feature made: a sketch, a datum, or the body (hiding a chamfer hides the body, so every feature that built it shows as hidden). While a dialog waits for a pick, **clicking a feature in the tree answers it** wherever the input takes what the feature stands for: a pattern's features, a sketch's profiles, a datum plane, axis or point, or the bodies a feature made. A row that the input cannot use is selected as usual. A **Section Analysis**, while there is one, is a row of the tree under the Origin: its eye hides it, a double click edits it and its menu deletes it. Below the tree, the selected feature's **Dependencies** (its **Parent** features, which it is built on, and its **Child** features, built on it; worked out from the design's references once per change, so selecting a feature is instant) and **Details** (its values, and Edit). |
 | Assembly Navigator | The components of this part: where each part file is, whether it is found, how many times it is placed. Add a component, make a new one, update parts from their files, Save all. Right-click a component for Make displayed part, Hide/Show, Fix in place and Break link. |
 | Work part banner | At the top of the Part Navigator in a part made the *work part* of an assembly: a switch for the assembly drawn around the part, and **Back to assembly**. |
 | Cue line | Along the bottom: what to pick next, or the sketch's state ("fully constrained", "N degrees of freedom"). |
@@ -53,16 +53,14 @@ A specifier's picks are inputs of its dialog (so the viewport sends clicks as it
 what it makes is plain data the commands already take. **Create Sketch** is built on three of them:
 the **Plane**, the **Reference Direction** (the sketch's x axis; Reverse flips it) and the **Sketch
 Origin** (the workpiece origin projected onto the plane, or any point). The direction starts at
-the x axis and the origin at the workpiece origin, so **clicking the plane is all it takes**: with
-both left at their defaults the click starts the sketch (an x axis square to the plane leaves the
-plane's own x). Change the direction or origin, or make the plane (an offset, a bisector…), and the
-dialog waits for OK. The sketch stays attached to its plane, with `sketch.create`'s `reframe`
+the x axis and the origin at the workpiece origin, so a sketch needs only the plane and OK, and
+there is always the chance to choose a vector or an origin first. The sketch stays attached to its plane, with `sketch.create`'s `reframe`
 (`origin`, `x_dir`, `soft`) holding the direction and origin. Other dialogs take a specifier by `specifier::add`, read it with
 `specifier::plane`/`vector`/`point` and draw it with `specifier::show`; Create Sketch is the first,
 and the pickers the other dialogs have today (Mirror and Draft planes, pattern directions and axes,
 Revolve's axis) move onto them one at a time.
 
-**In a sketch**, the Advanced ribbon puts **Finish Sketch** first, with **Reattach Sketch** beside it:
+**In a sketch**, the Advanced ribbon puts **Finish Sketch** first (the only finish button; finishing with auto constrain is in its drop-down), with **Reattach Sketch** beside it:
 the same Plane, Reference Direction and Sketch Origin as Create Sketch, applied to the sketch being
 edited (or the one selected in the tree) with its geometry and dimensions kept. It waits for OK, and
 what is left unspecified is left as it was (`sketch.reattach`, which is `sketch.redefine` with a

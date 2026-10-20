@@ -682,3 +682,37 @@ fn mate_types_fix_angle_parallel_and_perpendicular() {
     }
     assert_eq!(app.session.doc.assembly.joints.first().map(|j| (j.kind, j.tilt.to_degrees().round())), Some((JointKind::Parallel, 45.0)));
 }
+
+/// Pattern Component: the picked component, a direction (or an axis) and the count make
+/// `occurrence.pattern`, which adds the instances.
+#[test]
+fn pattern_component_from_a_pick_and_a_direction() {
+    let mut app = two_boxes();
+    app.start("occurrence.pattern");
+    let mut d = app.dialog.clone().unwrap();
+    assert!(apply_commands(&app, &d).is_err(), "nothing picked");
+    let body = app.session.occurrence_bodies(&[occ(&app, "B")], true).unwrap().remove(0);
+    d.inputs[0].items = vec![Sel::Body { name: body }];
+    assert!(apply_commands(&app, &d).is_err(), "no direction");
+    d.inputs[1].items = vec![Sel::Axis { name: "X".into() }];
+    let c = apply_commands(&app, &d).unwrap();
+    assert_eq!(c[0].0, "occurrence.pattern");
+    assert_eq!(c[0].1["direction"], json!([1.0, 0.0, 0.0]));
+    for (name, p) in c {
+        app.run(&name, p).unwrap();
+    }
+    let b = app.session.doc.find_component("B").unwrap();
+    assert_eq!(app.session.doc.occurrences.iter().filter(|o| o.component == b).count(), 3, "the original and two copies");
+    // A circular layout takes an axis.
+    app.start("occurrence.pattern");
+    let mut d = app.dialog.clone().unwrap();
+    if let Kind::Assembly(Asm::Pattern(f)) = &mut d.kind {
+        f.layout = 1;
+        f.count = "4".into();
+    }
+    let body = app.session.occurrence_bodies(&[occ(&app, "B")], true).unwrap().remove(0);
+    d.inputs[0].items = vec![Sel::Body { name: body }];
+    d.inputs[1].items = vec![Sel::Axis { name: "Z".into() }];
+    let c = apply_commands(&app, &d).unwrap();
+    assert_eq!((c[0].1["layout"].clone(), c[0].1["axis"].clone()), (json!("circular"), json!([0.0, 0.0, 1.0])));
+}

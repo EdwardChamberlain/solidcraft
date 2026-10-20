@@ -20,6 +20,10 @@ mod transfer;
 #[path = "occurrence_tests.rs"]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod occurrence_tests;
+#[cfg(test)]
+#[path = "component_pattern_tests.rs"]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod pattern_tests;
 
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("component.create", "New Component", new_component)
@@ -50,6 +54,12 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("component.move_sketches", "Move Sketches to Component", move_sketches).icon("move").params("sketches: [ids or names], component"),
     CommandSpec::new("occurrence.copy", "Paste (Instance)", copy_occurrence).icon("copy")
         .params("component (or occurrence): what to place again; path?: validates selected occurrence; parent?: component (default: the same parent); translate?: [x,y,z]. Copies the selected effective transform, including pending moves"),
+    CommandSpec::new("occurrence.pattern", "Pattern Component", pattern_occurrence).icon("pattern").params(
+        "occurrence | component (its first occurrence); layout?: linear (default) | circular; count: 2…500 (including the original); linear: direction: [x,y,z] (in the frame of the component it sits in), spacing: length; circular: axis?: [x,y,z] (default z), origin?: [x,y,z], angle?: total angle (default 360 deg: the copies are spread round, the last one short of the first). Each copy is an instance of the same component, placed from the original → occurrences: [ids]",
+    ),
+    CommandSpec::new("component.replace", "Replace Component", replace_component).icon("component").params(
+        "component | occurrence: what to replace (a component: every place it is used); with: the component to use instead (not one that contains the place it would go). Each place keeps its position, its fixed state and its joints; a joint on a face the new component does not have reports that it lost it",
+    ),
     CommandSpec::new("component.paste_new", "Paste New", paste_new).icon("paste").params("component: independently copy its nested definition graph and history, materials and styles; occurrence?, path?: selected source placement; translate?: [x,y,z]. Reassigned external bodies become base geometry; retained external links and omitted boundary joints are reported"),
     CommandSpec::new("occurrence.move", "Move Occurrence", move_occurrence).icon("move")
         .params("occurrence; path?: exact placement; space?: local|world (default local); translate?: [x,y,z]; axis?: [x,y,z], angle?: radians or \"30 deg\", origin?: [x,y,z]; capture?: bool (default true; false keeps it pending until Capture Position). Nested occurrence definitions remain shared"),
@@ -338,6 +348,102 @@ fn copy_occurrence(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let id = s.doc_mut().add_occurrence(comp, parent, m)?;
     Ok(json!({"occurrence": id, "component": comp}))
+}
+
+/// A number (millimetres or degrees as given) or an expression of the unit, for a pattern's values.
+fn pattern_value(s: &Session, p: &Value, key: &str, kind: solidcraft_doc::expr::Kind, default: Option<f64>, cmd: &str) -> Result<f64> {
+    let v = match p.get(key) {
+        None => default.ok_or_else(|| bad(cmd, format!("`{key}` is required")))?,
+        Some(Value::String(e)) => s.doc.eval(e, kind).map_err(|e| bad(cmd, format!("`{key}`: {e}")))?,
+        Some(v) => v.as_f64().ok_or_else(|| bad(cmd, format!("`{key}` must be a number or an expression")))?,
+    };
+    if v.is_finite() && v.abs() <= 1e9 { Ok(v) } else { Err(bad(cmd, format!("`{key}` must be a finite value"))) }
+}
+
+fn pattern_occurrence(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "occurrence.pattern";
+    let src = if p.get("occurrence").is_some() {
+        let id = occurrence(s, p, cmd)?;
+        s.doc.occurrences.iter().find(|o| o.id == id).cloned()
+    } else {
+        let comp = component(s, p, "component", cmd)?;
+        s.doc.occurrence_of(comp).cloned()
+    }
+    .ok_or_else(|| bad(cmd, "that component has no occurrence"))?;
+    let whole = |v: &Value| v.as_u64().or_else(|| v.as_f64().filter(|f| f.fract() == 0.0 && *f >= 0.0 && *f <= 1e6).map(|f| f as u64));
+    let count = p.get("count").and_then(whole).filter(|n| (2..=500).contains(n)).ok_or_else(|| bad(cmd, "`count` must be 2…500"))? as usize;
+    let layout = str_(p, "layout").unwrap_or("linear");
+    let base = s.pending_moves.get(&src.id).unwrap_or(&src.transform).to_owned();
+    let mut deltas = Vec::new();
+    match layout {
+        "linear" => {
+            let dir = move_vector(p, "direction", Vec3::ZERO, false, cmd)?.normalized().ok_or_else(|| bad(cmd, "`direction` must be a direction"))?;
+            let spacing = pattern_value(s, p, "spacing", solidcraft_doc::expr::Kind::Length, None, cmd)?;
+            for k in 1..count {
+                deltas.push(translation(dir * (spacing * k as f64)));
+            }
+        }
+        "circular" => {
+            let axis = move_vector(p, "axis", Vec3::Z, false, cmd)?;
+            if axis.normalized().is_none() {
+                return Err(bad(cmd, "`axis` must be a direction"));
+            }
+            let origin = move_vector(p, "origin", Vec3::ZERO, true, cmd)?;
+            let total = pattern_value(s, p, "angle", solidcraft_doc::expr::Kind::Angle, Some(std::f64::consts::TAU), cmd)?;
+            // A full turn spreads the copies round; less leaves the last one at the end.
+            let steps = if (total.abs() - std::f64::consts::TAU).abs() < 1e-9 { count } else { count - 1 };
+            for k in 1..count {
+                deltas.push(solidcraft_doc::rigid(Vec3::ZERO, origin, axis, total * k as f64 / steps as f64));
+            }
+        }
+        _ => return Err(bad(cmd, "`layout` must be linear or circular")),
+    }
+    let mut made = Vec::new();
+    let mut next = (*s.doc).clone();
+    for delta in deltas {
+        let m = solidcraft_doc::mat_mul(&delta, &base);
+        if !valid_position(&m) {
+            return Err(bad(cmd, "a copy's transform exceeds the supported numeric range"));
+        }
+        made.push(next.add_occurrence(src.component, src.parent, m).map_err(|e| bad(cmd, e.to_string()))?);
+    }
+    *s.doc_mut() = next;
+    Ok(json!({"occurrences": made, "component": src.component}))
+}
+
+fn replace_component(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "component.replace";
+    let with = component(s, p, "with", cmd)?;
+    if with == 0 {
+        return Err(bad(cmd, "pick a component to use, not the design"));
+    }
+    let targets: Vec<u64> = if p.get("occurrence").is_some() {
+        vec![occurrence(s, p, cmd)?]
+    } else {
+        let comp = component(s, p, "component", cmd)?;
+        s.doc.occurrences.iter().filter(|o| o.component == comp).map(|o| o.id).collect()
+    };
+    if targets.is_empty() {
+        return Err(bad(cmd, "nothing is placed to replace"));
+    }
+    let mut next = (*s.doc).clone();
+    let with_name = next.components.iter().find(|c| c.id == with).map(|c| c.name.clone()).unwrap_or_default();
+    for id in &targets {
+        let Some(o) = next.occurrences.iter().find(|o| o.id == *id).cloned() else { continue };
+        if o.component == with {
+            continue;
+        }
+        if next.component_within(o.parent, with) {
+            return Err(bad(cmd, format!("{with_name} contains the place {} sits in", o.name)));
+        }
+        let k = next.occurrences.iter().filter(|x| x.component == with).count() + 1;
+        if let Some(o) = next.occurrences.iter_mut().find(|o| o.id == *id) {
+            o.component = with;
+            o.name = format!("{with_name}:{k}");
+        }
+    }
+    *s.doc_mut() = next;
+    Ok(json!({"replaced": targets, "with": with}))
 }
 
 fn paste_new(s: &mut Session, p: &Value) -> Result<Value> {

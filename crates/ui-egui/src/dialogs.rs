@@ -866,7 +866,7 @@ impl Dialog {
     }
 
     /// Make the first single input still empty (after the filled ones) active.
-    fn advance(&mut self) {
+    pub(crate) fn advance(&mut self) {
         // An input that may stay empty (a specifier with its default) is not the next one to fill.
         let next =
             (0..self.inputs.len()).find(|k| self.inputs.get(*k).is_some_and(|i| i.items.is_empty()) && !crate::specifier::is_optional(self, *k));

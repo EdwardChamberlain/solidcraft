@@ -9,6 +9,7 @@ pub mod assembly_nav;
 pub mod classic;
 pub mod part_nav;
 pub mod part_nav_tree;
+pub mod selection_bar;
 
 use crate::SolveApp;
 use crate::prefs::ModellingApproach;

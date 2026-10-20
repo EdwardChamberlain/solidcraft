@@ -152,6 +152,8 @@ mod revolve_manipulator_tests;
 pub mod scenario;
 pub mod select_other;
 pub mod selection;
+#[cfg(test)]
+mod selection_bar_tests;
 pub mod shell;
 #[cfg(test)]
 mod shell_face_sketch_ui_tests;
@@ -241,6 +243,10 @@ pub struct UiState {
     pub pick_off: Vec<String>,
     /// A click on a face picks its whole body.
     pub pick_bodies: bool,
+    /// Where a click may pick geometry from (the Advanced selection bar).
+    pub selection_scope: selection::Scope,
+    /// What picking an edge takes with it (the Advanced selection bar).
+    pub selection_intent: selection::Intent,
     /// 0: shaded with edges, 1: shaded, 2: wireframe, 3: shaded with hidden edges.
     pub visual_style: u8,
     /// A soft shadow on the ground under the model (seen from above).
@@ -271,6 +277,8 @@ impl Default for UiState {
             dark: true,
             pick_off: Vec::new(),
             pick_bodies: false,
+            selection_scope: Default::default(),
+            selection_intent: Default::default(),
             visual_style: 0,
             ground_shadow: true,
             up_axis: Default::default(),
@@ -569,6 +577,15 @@ impl SolveApp {
             "grid": self.ui.show_grid,
             "perspective": self.ui.perspective,
             "pick_bodies": self.ui.pick_bodies,
+            "selection_scope": match self.ui.selection_scope {
+                selection::Scope::Entire => "entire",
+                selection::Scope::WorkPart => "work_part",
+                selection::Scope::WorkPartAndComponents => "work_part_and_components",
+            },
+            "selection_intent": match self.ui.selection_intent {
+                selection::Intent::Single => "single",
+                selection::Intent::TangentChain => "tangent_chain",
+            },
             "auto_project": self.session.auto_project,
             "visual_style": self.ui.visual_style,
             "browser_collapsed": self.tree.collapsed,
@@ -602,6 +619,17 @@ impl SolveApp {
         }
         if let Some(b) = flag("pick_bodies") {
             self.ui.pick_bodies = b;
+        }
+        match v.get("selection_scope").and_then(Value::as_str) {
+            Some("entire") => self.ui.selection_scope = selection::Scope::Entire,
+            Some("work_part") => self.ui.selection_scope = selection::Scope::WorkPart,
+            Some("work_part_and_components") => self.ui.selection_scope = selection::Scope::WorkPartAndComponents,
+            _ => {}
+        }
+        match v.get("selection_intent").and_then(Value::as_str) {
+            Some("single") => self.ui.selection_intent = selection::Intent::Single,
+            Some("tangent_chain") => self.ui.selection_intent = selection::Intent::TangentChain,
+            _ => {}
         }
         if let Some(a) = flag("auto_project") {
             self.session.auto_project = a;

@@ -23,7 +23,7 @@ still in use.
 | Part | What it is |
 |---|---|
 | Ribbon | **Home** (Feature, Datum, Pattern), **Assembly**, **Analysis**, **View**, **Tools**; **Sketch** appears while a sketch is open. The same commands as Classic, grouped and cut down to a part-modelling set. |
-| Selection bar | The selection filter: what a click in the viewport can pick. |
+| Selection bar | A **type filter** (All, Bodies, Faces, Edges, Vertices, Sketch Geometry; Customize has the finer checkboxes), a **scope** (Entire Design, Work Part Only, Work Part and Components) and an **intent** (Single, or Tangent Chain: picking an edge takes the edges that continue it smoothly). They apply to clicks and to picks into a dialog. |
 | Resource bar | Vertical tabs at the left edge: **Part Navigator** and **Assembly Navigator**. Click the open one to hide it. |
 | Part Navigator | The feature tree: the Origin (planes and axes), then every feature in the order it replays, with the rollback marker. Sketches stay where they were made. Select a feature and its **parents** (the features it requires: its sketches, the features that made the faces and edges it picked, read from their persistent names, and, for a join or cut that picks no geometry, the feature that made the body; not whatever else changed the same body before it) show in the warning colour and its **children** (what is built on it) in the addition colour, one step each way. Every row has an **eye** at its left that hides what the feature made: a sketch, a datum, or the body (hiding a chamfer hides the body, so every feature that built it shows as hidden). While a dialog waits for a pick, **clicking a feature in the tree answers it** wherever the input takes what the feature stands for: a pattern's features, a sketch's profiles, a datum plane, axis or point, or the bodies a feature made. A row that the input cannot use is selected as usual. A **Section Analysis**, while there is one, is a row of the tree under the Origin: its eye hides it, a double click edits it and its menu deletes it. Below the tree, the selected feature's **Dependencies** (its **Parent** features, which it is built on, and its **Child** features, built on it; worked out from the design's references once per change, so selecting a feature is instant) and **Details** (its values, and Edit). |
 | Assembly Navigator | The components of this part: where each part file is, whether it is found, how many times it is placed. Add a component, make a new one, update parts from their files, Save all. Right-click a component for Make displayed part, Hide/Show, Fix in place and Break link. |
@@ -94,6 +94,8 @@ See [advanced-approach-files.md](advanced-approach-files.md) for how parts refer
 is built and what is not yet.
 
 ## Not built yet
+
+- Snap-point toggles in the selection bar (the sketch tools infer their snaps without toggles) and the connected-curve and face-edge intents.
 
 - Referring to the assembly's geometry from the work part (picking a face of another component, or
   linking to it): the context is drawn but is not pickable.

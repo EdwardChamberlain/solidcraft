@@ -1698,7 +1698,10 @@ fn tool_hover(app: &SolveApp, hits: &[Hit]) -> Option<Hit> {
 pub fn candidate(app: &SolveApp, hits: &[Hit]) -> Option<(Hit, Sel)> {
     if let Some(d) = app.dialog.as_ref().filter(|d| d.wants_picks()) {
         let snap = d.face_snap(&app.session, hits);
-        return hits.iter().find_map(|h| d.candidate_on(&app.session, h, snap.as_ref()).map(|s| (h.clone(), s)));
+        return hits
+            .iter()
+            .filter(|h| dialog_pick_allowed(app, h))
+            .find_map(|h| d.candidate_on(&app.session, h, snap.as_ref()).map(|s| (h.clone(), s)));
     }
     hits.iter().filter(|h| pick_allowed(app, h)).find_map(|h| hit_candidate(app, h))
 }
@@ -1709,13 +1712,53 @@ pub fn candidates(app: &SolveApp, hits: &[Hit]) -> Vec<(Hit, Sel)> {
         // The face under the cursor is looked up once for every sketch point a face place may
         // snap to, before Select Other caps its rows.
         let snap = d.face_snap(&app.session, hits);
-        return hits.iter().filter_map(|h| d.candidate_on(&app.session, h, snap.as_ref()).map(|s| (h.clone(), s))).collect();
+        return hits
+            .iter()
+            .filter(|h| dialog_pick_allowed(app, h))
+            .filter_map(|h| d.candidate_on(&app.session, h, snap.as_ref()).map(|s| (h.clone(), s)))
+            .collect();
     }
     hits.iter().filter(|h| pick_allowed(app, h)).filter_map(|h| hit_candidate(app, h)).collect()
 }
 
+/// Is the body a hit is on inside the selection bar's scope?
+fn in_scope(app: &SolveApp, h: &Hit) -> bool {
+    use crate::selection::Scope;
+    let (Hit::Vertex { body, .. } | Hit::Edge { body, .. } | Hit::Face { body, .. }) = h else { return true };
+    let s = &app.session;
+    let st = s.world_state();
+    let Some(b) = st.body(body) else { return true };
+    // The scope is the Advanced selection bar's; Classic has none.
+    let scope = if app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced { app.ui.selection_scope } else { Scope::Entire };
+    match scope {
+        Scope::Entire => true,
+        Scope::WorkPart => b.component == s.active_component,
+        Scope::WorkPartAndComponents => s.active_component == 0 || s.doc.component_within(b.component, s.active_component),
+    }
+}
+
+/// What the selection bar lets a click pick into a dialog: its scope, and its type filter for the
+/// geometry of bodies (a dialog's own input decides the rest).
+fn dialog_pick_allowed(app: &SolveApp, h: &Hit) -> bool {
+    // The selection bar is the Advanced layout's: Classic's filter never reached a dialog.
+    if app.preferences.modelling_approach != crate::prefs::ModellingApproach::Advanced {
+        return true;
+    }
+    let off = |k: &str| app.ui.pick_off.iter().any(|x| x == k);
+    in_scope(app, h)
+        && match h {
+            Hit::Vertex { .. } => !off("vertices"),
+            Hit::Edge { .. } => !off("edges"),
+            Hit::Face { .. } => !off("faces"),
+            _ => true,
+        }
+}
+
 /// What the selection filter lets a click pick with no dialog.
 fn pick_allowed(app: &SolveApp, h: &Hit) -> bool {
+    if !in_scope(app, h) {
+        return false;
+    }
     let off = |k: &str| app.ui.pick_off.iter().any(|x| x == k);
     match h {
         Hit::SketchCurve { .. } => !off("sketch") && !off("sketch_curves"),
@@ -2874,6 +2917,17 @@ pub(crate) fn grouped_selection(s: &solidcraft_engine::Session, sel: &Sel) -> Ve
         Sel::Edge { body, index, .. } => {
             if let Some(b) = st.body(body) {
                 let m = b.mesh();
+                // The selection bar's intent: the edges that continue this one smoothly.
+                if crate::selection::intent() == crate::selection::Intent::TangentChain {
+                    let chain: Vec<Sel> = m
+                        .tangent_chain(*index, 2f64.to_radians())
+                        .into_iter()
+                        .filter_map(|i| m.edges.get(i).map(|e| Sel::Edge { body: body.clone(), index: i, point: polyline_mid(e) }))
+                        .collect();
+                    if !chain.is_empty() {
+                        return chain;
+                    }
+                }
                 return m
                     .circular_rim(*index)
                     .into_iter()
@@ -2910,7 +2964,11 @@ pub(crate) fn grouped_selection(s: &solidcraft_engine::Session, sel: &Sel) -> Ve
 
 /// Measure keeps one entry per visible item, rather than using its two slots for kernel halves.
 pub(crate) fn measurement_selection(s: &solidcraft_engine::Session, sel: &Sel) -> Sel {
+    // One visible item is measured, whatever the intent would take with it.
+    let intent = crate::selection::intent();
+    crate::selection::set_intent(crate::selection::Intent::Single);
     let pieces = grouped_selection(s, sel);
+    crate::selection::set_intent(intent);
     let mut representative = sel.clone();
     match &mut representative {
         Sel::Edge { index, .. } => {

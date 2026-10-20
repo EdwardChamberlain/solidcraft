@@ -3,6 +3,8 @@
 use crate::{SolveApp, agent_chat, browser, palette, preview, render_workspace, timeline, timeline_left, toolbar, viewport};
 
 pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
+    // The selection bar's intent is the Advanced layout's.
+    crate::selection::set_intent(crate::selection::Intent::Single);
     toolbar::toolbar(app, ui);
     let show_timeline = app.ui.show_timeline && !render_workspace::active(app);
     let left_timeline = show_timeline && app.preferences.timeline_left;

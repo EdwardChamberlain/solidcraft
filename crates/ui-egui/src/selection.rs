@@ -256,3 +256,39 @@ mod tests {
         assert_eq!(one.items, vec![Sel::Plane { name: "YZ".into() }]);
     }
 }
+
+/// Where a click may pick geometry from (the selection bar's scope).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Scope {
+    /// Anything in the design, its components included.
+    #[default]
+    Entire,
+    /// Only what belongs to the part being worked on (not its components).
+    WorkPart,
+    /// The work part and the components under it.
+    WorkPartAndComponents,
+}
+
+/// What picking one edge takes with it (the selection bar's intent).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Intent {
+    /// The edge picked (a whole circle's rim, as ever).
+    #[default]
+    Single,
+    /// The edges that continue it smoothly, end to end.
+    TangentChain,
+}
+
+thread_local! {
+    static INTENT: std::cell::Cell<Intent> = const { std::cell::Cell::new(Intent::Single) };
+}
+
+/// Set what a pick of an edge takes with it, for the picks that follow (the shell sets it each
+/// frame from the selection bar).
+pub fn set_intent(intent: Intent) {
+    INTENT.with(|c| c.set(intent));
+}
+
+pub fn intent() -> Intent {
+    INTENT.with(std::cell::Cell::get)
+}

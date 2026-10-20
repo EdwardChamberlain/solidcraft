@@ -389,3 +389,16 @@ fn finish_sketch_is_first_in_advanced_with_reattach_beside_it_and_last_in_classi
         }
     }
 }
+
+#[test]
+fn the_sketch_ribbon_has_one_finish_button_and_the_others_are_in_its_drop_down() {
+    let mut h = advanced();
+    h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+    h.frames(6);
+    let lists = panel_lists("SKETCH");
+    let finish = lists.iter().find(|(p, ..)| *p == "FINISH SKETCH").expect("the Finish Sketch panel");
+    assert!(finish.1.iter().any(|c| c.id == "sketch.finish_auto_constrain"), "finishing with auto constrain is in the panel");
+    // Shown on the toolbar: Finish Sketch and Reattach Sketch only.
+    assert!(h.widget("Finish with AutoConstrain").is_none(), "not a button");
+    assert!(rect_of("panel:SKETCH:FINISH SKETCH").is_some_and(|r| r.width() < 130.0), "two buttons wide");
+}

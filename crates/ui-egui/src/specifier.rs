@@ -37,8 +37,6 @@ pub struct Specifier {
     pub class: Class,
     /// The Type: an index into [`choices`], 0 being Inferred.
     pub ty: usize,
-    /// The Type it started at (what the dialog defaults to).
-    ty0: usize,
     /// How many of the dialog's inputs are this specifier's (they follow the earlier specifiers').
     pub count: usize,
     /// Vectors: the opposite direction.
@@ -107,17 +105,12 @@ impl Specifier {
             Class::Point => vec!["0 mm".into(), "0 mm".into(), "0 mm".into()],
             _ => vec!["X".into()],
         };
-        Specifier { class, ty, ty0: ty, count: 0, reverse: false, values, optional: false, memo: None, inner: None }
+        Specifier { class, ty, count: 0, reverse: false, values, optional: false, memo: None, inner: None }
     }
 
     /// A specifier starting at the way with this id (Inferred when there is none).
     pub fn with_id(class: Class, id: &str) -> Specifier {
         Specifier::new(class, choices(class).iter().position(|c| c.0 == id).unwrap_or(0))
-    }
-
-    /// Is it still as the dialog made it: the starting way, its values, nothing reversed?
-    pub fn is_default(&self) -> bool {
-        self.ty == self.ty0 && !self.reverse && self.values == Specifier::new(self.class, self.ty0).values
     }
 
     /// The same specifier with its default being no pick at all.
@@ -485,18 +478,6 @@ pub fn is_sketch(d: &Dialog) -> bool {
 /// Is input `k` of the dialog one that need not be picked?
 pub fn is_optional(d: &Dialog, k: usize) -> bool {
     d.inputs.get(k).is_some_and(|i| i.owner > 0 && d.specs.get(i.owner - 1).is_some_and(|s| s.optional))
-}
-
-/// Does picking the plane alone start the sketch? When the direction and the origin are still
-/// their defaults and the plane is a plane or face that is picked (not made), the click is all
-/// there is to say; anything else waits for OK.
-pub fn starts_on_pick(app: &SolveApp, d: &Dialog) -> bool {
-    is_sketch(d)
-        && d.origin.as_deref() != Some("sketch.reattach")
-        && d.specs.get(1).is_some_and(Specifier::is_default)
-        && d.specs.get(2).is_some_and(Specifier::is_default)
-        && d.specs.first().is_some_and(|s| matches!(s.id(), "inferred" | "plane"))
-        && plane(app, d, 0).is_ok_and(|p| p.prefix.is_empty() && p.sel.is_some())
 }
 
 /// A pick as a line: a point on it and its direction (an axis, an edge or sketch line, the normal

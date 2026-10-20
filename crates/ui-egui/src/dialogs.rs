@@ -3361,15 +3361,6 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     }
     // A plane picked for a new sketch starts it right away.
     let mut then_start = None;
-    if crate::specifier::starts_on_pick(app, &d) && d.error.is_none() && app.applying.is_none() {
-        match run_dialog(app, &d) {
-            Ok(()) => {
-                cancel = true;
-                then_start = d.then_start;
-            }
-            Err(error) => d.refuse(app, error),
-        }
-    }
     if matches!(d.kind, Kind::Sketch)
         && !crate::specifier::is_sketch(&d)
         && d.error.is_none()

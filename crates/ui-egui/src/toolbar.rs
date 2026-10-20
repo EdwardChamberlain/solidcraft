@@ -753,8 +753,10 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 if let Some(reattach) = solidcraft_engine::find_command("sketch.reattach")
                     && !finish.1.iter().any(|c| c.id == reattach.id)
                 {
-                    finish.1.push(reattach);
-                    finish.2 = finish.2.max(2);
+                    // Finish Sketch and Reattach Sketch are the buttons; the other ways to finish
+                    // (with auto constrain) are in the panel's drop-down.
+                    finish.1.insert(1.min(finish.1.len()), reattach);
+                    finish.2 = 2;
                 }
                 panels.insert(0, finish);
             }

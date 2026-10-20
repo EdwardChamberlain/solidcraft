@@ -98,6 +98,7 @@ pub fn left_timeline(app: &mut SolveApp, ui: &mut egui::Ui) {
             // where a sketch or a datum dialog picks them from.
             if app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced {
                 crate::browser::origin_rows(app, ui, 0);
+                crate::browser::section_row(app, ui, 0);
             }
             vertical_features(app, ui)
         });

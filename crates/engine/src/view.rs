@@ -604,6 +604,24 @@ pub fn construction_axes(s: &Session) -> Vec<(u64, String, Vec3, Vec3)> {
         .collect()
 }
 
+/// Coordinate systems, as evaluated: (feature id, name, frame: origin, x and y axes).
+pub fn coordinate_systems(s: &Session) -> Vec<(u64, String, Plane)> {
+    constructs(s)
+        .into_iter()
+        .filter_map(|(id, name, g)| match g {
+            solidcraft_doc::construct::ConstructGeom::Csys(p) => Some((id, name, p)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The work coordinate system's frame (origin, x and y axes; z is their cross product): the datum
+/// CSYS the design names, else the world's own. What a new sketch's origin and x axis, and the
+/// workpiece-origin and coordinate-axis choices, are measured from.
+pub fn work_frame(s: &Session) -> Plane {
+    s.doc.work_csys.and_then(|id| coordinate_systems(s).into_iter().find(|(f, ..)| *f == id)).map_or(Plane::XY, |(.., frame)| frame)
+}
+
 /// Construction points, as evaluated: (feature id, name, position).
 pub fn construction_points(s: &Session) -> Vec<(u64, String, Vec3)> {
     constructs(s)
@@ -632,6 +650,7 @@ fn constructs(s: &Session) -> Vec<(u64, String, solidcraft_doc::construct::Const
                 ConstructGeom::Plane(p) => ConstructGeom::Plane(Plane::new(pt(p.origin), v(p.x), v(p.y)).unwrap_or(*p)),
                 ConstructGeom::Axis { origin, dir } => ConstructGeom::Axis { origin: pt(*origin), dir: v(*dir) },
                 ConstructGeom::Point(p) => ConstructGeom::Point(pt(*p)),
+                ConstructGeom::Csys(p) => ConstructGeom::Csys(Plane::new(pt(p.origin), v(p.x), v(p.y)).unwrap_or(*p)),
             };
             Some((c.feature, c.name.clone(), g))
         })

@@ -966,7 +966,13 @@ fn chain_fingerprint(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature
 fn context_digest(doc: &Document, vals: &BTreeMap<String, Value>) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     for f in doc.features.iter().filter(|f| {
-        matches!(f.kind, FeatureKind::ConstructionPlane { .. } | FeatureKind::ConstructionAxis { .. } | FeatureKind::ConstructionPoint { .. })
+        matches!(
+            f.kind,
+            FeatureKind::ConstructionPlane { .. }
+                | FeatureKind::ConstructionAxis { .. }
+                | FeatureKind::ConstructionPoint { .. }
+                | FeatureKind::ConstructionCsys { .. }
+        )
     }) {
         fingerprint(0, f, vals, false, &StepDigests::default()).hash(&mut h);
     }
@@ -4954,6 +4960,20 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             let p =
                 crate::construct::resolve_point(&crate::construct::Ctx { doc, vals, st: &construction_state(doc, st, f.component), depth: 0 }, def)?;
             st.construct.push(crate::construct::Construct { feature: f.id, name: f.name.clone(), geom: crate::construct::ConstructGeom::Point(p) });
+            Ok(())
+        }
+        FeatureKind::ConstructionCsys { def } => {
+            let frame =
+                crate::construct::resolve_csys(&crate::construct::Ctx { doc, vals, st: &construction_state(doc, st, f.component), depth: 0 }, def)?;
+            st.construct.push(crate::construct::Construct {
+                feature: f.id,
+                name: f.name.clone(),
+                geom: crate::construct::ConstructGeom::Csys(frame),
+            });
+            // Its planes, axes and origin are constructions of their own, by `Name:XY`…
+            for (name, geom) in crate::construct::csys_parts(&f.name, &frame) {
+                st.construct.push(crate::construct::Construct { feature: f.id, name, geom });
+            }
             Ok(())
         }
         FeatureKind::BoundaryFill { tools, cells, operation, remove_tools } => {

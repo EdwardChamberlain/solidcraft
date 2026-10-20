@@ -1011,6 +1011,39 @@ pub(crate) fn origin_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
     }
 }
 
+/// The parts of a datum coordinate system listed under its row in the Advanced tree: its origin,
+/// axes and planes, each with an eye, a click picking one into a dialog (or selecting it).
+pub(crate) fn csys_rows(app: &mut SolveApp, ui: &mut egui::Ui, csys: &str, depth: usize) {
+    let items = [("O", "point"), ("X", "axis"), ("Y", "axis"), ("Z", "axis"), ("XY", "plane"), ("XZ", "plane"), ("YZ", "plane")];
+    for (part, icon) in items {
+        let name = format!("{csys}:{part}");
+        let visible = !app.session.visibility.hidden_origin.contains(&name);
+        let sel = match icon {
+            "plane" => Some(Sel::Plane { name: name.clone() }),
+            "axis" => Some(Sel::Axis { name: name.clone() }),
+            _ => None,
+        };
+        let selected = sel.as_ref().is_some_and(|x| app.session.selection.contains(x));
+        let r = draw_row(
+            ui,
+            ui.id().with(("csys_part", &name)),
+            &Row { depth, eye: Some(visible), icon, label: part, selected, dim: !visible, ..Default::default() },
+        );
+        if r.eye {
+            if visible {
+                app.session.visibility.hidden_origin.push(name.clone());
+            } else {
+                app.session.visibility.hidden_origin.retain(|h| *h != name);
+            }
+        }
+        if r.clicked
+            && let Some(x) = sel
+        {
+            pick_from_browser(app, x);
+        }
+    }
+}
+
 /// The standard views listed under Named Views: (label, view).
 pub const STANDARD_VIEWS: [(&str, &str); 4] = [("Top", "top"), ("Front", "front"), ("Right", "right"), ("Home", "home")];
 

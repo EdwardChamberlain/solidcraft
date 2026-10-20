@@ -82,7 +82,7 @@ const ADVANCED_FEATURE: &[&str] = &[
     "solid.combine",
 ];
 
-const ADVANCED_DATUM: &[&str] = &["datum.plane", "datum.axis", "datum.point"];
+const ADVANCED_DATUM: &[&str] = &["datum.plane", "datum.axis", "datum.point", "datum.csys"];
 
 const ADVANCED_PATTERN: &[&str] = &["solid.pattern", "solid.mirror"];
 
@@ -163,7 +163,7 @@ pub fn layout<'a>(tab: &str, panel: &str, specs: &[&'a CommandSpec]) -> Option<(
             tab,
         ),
         ("HOME", "FEATURE") => (ADVANCED_FEATURE, 7, tab),
-        ("HOME", "DATUM") => (ADVANCED_DATUM, 3, tab),
+        ("HOME", "DATUM") => (ADVANCED_DATUM, 4, tab),
         ("HOME", "PATTERN") => (ADVANCED_PATTERN, 2, tab),
         ("ASSEMBLY", "COMPONENT") => (ADVANCED_COMPONENT, 2, tab),
         ("ASSEMBLY", "JOINT") => (ADVANCED_JOINT, 3, tab),

@@ -28,6 +28,21 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("datum.point", "Datum Point", datum_point)
         .icon("point")
         .params("type: vertex|two_edges|three_planes|center|edge_plane|along_path; then the parameters of that type's command (construct.point.*). One datum point, whichever way it is defined"),
+    CommandSpec::new("datum.csys", "Datum CSYS", datum_csys)
+        .icon("origin")
+        .params("type: three_points|on_plane|frame; then the parameters of that type's command (construct.csys.*). One datum coordinate system, whichever way it is defined"),
+    CommandSpec::new("construct.csys.three_points", "CSYS From Three Points", csys_three_points)
+        .icon("origin")
+        .params("origin: point ref; x: point ref (on the +X axis); y: point ref (in the XY plane, on the +Y side); name?"),
+    CommandSpec::new("construct.csys.on_plane", "CSYS On Plane", csys_on_plane)
+        .icon("origin")
+        .params("plane: plane or planar face ref; origin?: point ref (moved onto the plane; default: the plane's own origin); name? Its axes are the plane's"),
+    CommandSpec::new("construct.csys.frame", "CSYS From Axes", csys_frame)
+        .icon("origin")
+        .params("origin: [x,y,z]; x_dir: [x,y,z]; y_dir: [x,y,z] (made perpendicular to x_dir, on the side it points); name?"),
+    CommandSpec::new("csys.set_work", "Make Work Coordinate System", set_work_csys)
+        .icon("origin")
+        .params("csys?: datum CSYS name or id (omit or null: the design's own is the work coordinate system again)"),
     CommandSpec::new("construct.axis.through_cylinder", "Axis Through Cylinder/Cone/Torus", axis_face)
         .at("SOLID", "CONSTRUCT")
         .icon("axis_through_cylinder")
@@ -126,12 +141,14 @@ fn geo(s: &Session, v: Option<&Value>, cmd: &str, what: &str) -> Result<GeoRef> 
         } else {
             match s.doc.find_feature(a).map(|f| &f.kind) {
                 Some(FeatureKind::ConstructionAxis { .. }) => GeoRef::Axis { name: a.to_string() },
+                _ if csys_part(s, a, &solidcraft_doc::construct::CSYS_AXES) => GeoRef::Axis { name: a.to_string() },
                 _ => return Err(bad(cmd, format!("no axis `{a}`"))),
             }
         }
     } else if let Some(n) = str_(v, "construct_point") {
         match s.doc.find_feature(n).map(|f| &f.kind) {
             Some(FeatureKind::ConstructionPoint { .. }) => GeoRef::ConstructPoint { name: n.to_string() },
+            _ if csys_part(s, n, &[solidcraft_doc::construct::CSYS_ORIGIN]) => GeoRef::ConstructPoint { name: n.to_string() },
             _ => return Err(bad(cmd, format!("no construction point `{n}`"))),
         }
     } else if v.as_str().is_some() {
@@ -381,5 +398,203 @@ mod datum_tests {
             assert!(e.contains(word), "{cmd}: {e}");
         }
         assert!(s.doc.features.is_empty());
+    }
+}
+
+/// Is `name` one of a datum coordinate system's parts (`Csys1:X`), of the kinds in `parts`?
+pub(super) fn csys_part(s: &Session, name: &str, parts: &[&str]) -> bool {
+    let Some((csys, part)) = name.rsplit_once(':') else { return false };
+    parts.contains(&part) && s.doc.find_feature(csys).is_some_and(|f| matches!(f.kind, FeatureKind::ConstructionCsys { .. }))
+}
+
+fn csys_three_points(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "construct.csys.three_points";
+    let (origin, x, y) = (geo(s, p.get("origin"), cmd, "origin")?, geo(s, p.get("x"), cmd, "x")?, geo(s, p.get("y"), cmd, "y")?);
+    let r = add_feature(s, p, FeatureKind::ConstructionCsys { def: solidcraft_doc::construct::CsysDef::ThreePoints { origin, x, y } })?;
+    Ok(csys_added(s, r))
+}
+
+fn csys_on_plane(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "construct.csys.on_plane";
+    let plane = geo(s, p.get("plane"), cmd, "plane")?;
+    let origin = match p.get("origin") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(geo(s, Some(v), cmd, "origin")?),
+    };
+    let r = add_feature(s, p, FeatureKind::ConstructionCsys { def: solidcraft_doc::construct::CsysDef::OnPlane { plane, origin } })?;
+    Ok(csys_added(s, r))
+}
+
+fn csys_frame(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "construct.csys.frame";
+    let v = |key: &str| -> Result<solidcraft_geom::Vec3> {
+        p.get(key)
+            .and_then(vec3)
+            .filter(|v| v.x.is_finite() && v.y.is_finite() && v.z.is_finite())
+            .ok_or_else(|| bad(cmd, format!("`{key}` must be [x, y, z]")))
+    };
+    let (origin, x_dir, y_dir) = (v("origin")?, v("x_dir")?, v("y_dir")?);
+    // Refused now when it makes no frame, not at the next evaluation.
+    let x = x_dir.normalized().ok_or_else(|| bad(cmd, "`x_dir` has no length"))?;
+    (y_dir - x * y_dir.dot(x)).normalized().ok_or_else(|| bad(cmd, "`y_dir` lies along `x_dir`"))?;
+    let r = add_feature(s, p, FeatureKind::ConstructionCsys { def: solidcraft_doc::construct::CsysDef::Frame { origin, x_dir, y_dir } })?;
+    Ok(csys_added(s, r))
+}
+
+/// A new coordinate system shows as its triad: its three planes start hidden (they are still its
+/// parts, and can be shown).
+fn csys_added(s: &mut Session, r: Value) -> Value {
+    if let Some(name) = r.get("name").and_then(Value::as_str) {
+        for part in solidcraft_doc::construct::CSYS_PLANES {
+            let plane = format!("{name}:{part}");
+            if !s.visibility.hidden_origin.contains(&plane) {
+                s.visibility.hidden_origin.push(plane);
+            }
+        }
+    }
+    r
+}
+
+fn datum_csys(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "datum.csys";
+    let types = [("three_points", "construct.csys.three_points"), ("on_plane", "construct.csys.on_plane"), ("frame", "construct.csys.frame")];
+    let names = || types.iter().map(|t| t.0).collect::<Vec<_>>().join(", ");
+    let ty = str_(p, "type").ok_or_else(|| bad(cmd, format!("`type` is required: {}", names())))?;
+    let (_, target) =
+        types.iter().find(|(name, _)| name.eq_ignore_ascii_case(ty)).ok_or_else(|| bad(cmd, format!("unknown csys type `{ty}` ({})", names())))?;
+    let mut q = p.clone();
+    if let Value::Object(m) = &mut q {
+        m.remove("type");
+    }
+    super::find_command(target).ok_or_else(|| bad(cmd, target.to_string()))?.run_nested(s, &q)
+}
+
+fn set_work_csys(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "csys.set_work";
+    let id = match p.get("csys") {
+        None | Some(Value::Null) => None,
+        Some(v) => {
+            let key = match v {
+                Value::Number(n) => n.to_string(),
+                Value::String(x) => x.clone(),
+                _ => return Err(bad(cmd, "`csys` must be a coordinate system's name or id")),
+            };
+            match s.doc.find_feature(&key) {
+                Some(f) if matches!(f.kind, FeatureKind::ConstructionCsys { .. }) => Some(f.id),
+                _ => return Err(bad(cmd, format!("no datum coordinate system `{key}`"))),
+            }
+        }
+    };
+    s.doc_mut().work_csys = id;
+    Ok(serde_json::json!({"work_csys": id}))
+}
+
+#[cfg(test)]
+mod csys_tests {
+    use serde_json::{Value, json};
+    use solidcraft_geom::Vec3;
+
+    use crate::Session;
+
+    fn run(s: &mut Session, id: &str, p: Value) -> Value {
+        match s.execute(id, &p) {
+            Ok(v) => v,
+            Err(e) => panic!("{id} {p}: {e}"),
+        }
+    }
+
+    fn near(a: Vec3, b: Vec3) -> bool {
+        a.dist(b) < 1e-9
+    }
+
+    fn csys(s: &mut Session) -> String {
+        let r = run(
+            s,
+            "datum.csys",
+            json!({"type":"three_points","origin":{"point":[10,0,0]},"x":{"point":[20,0,0]},"y":{"point":[10,5,0]},"name":"Work"}),
+        );
+        r["name"].as_str().unwrap_or("Work").to_string()
+    }
+
+    #[test]
+    fn a_coordinate_system_offers_its_planes_axes_and_origin_by_name() {
+        let mut s = Session::default();
+        let name = csys(&mut s);
+        let planes = crate::view::construction_planes(&s);
+        let plane = |n: &str| planes.iter().find(|p| p.1 == format!("{name}:{n}")).map(|p| p.2).unwrap_or_else(|| panic!("{n}: {planes:?}"));
+        assert!(near(plane("XY").origin, Vec3::new(10.0, 0.0, 0.0)) && near(plane("XY").normal(), Vec3::Z));
+        assert!(near(plane("XZ").normal(), Vec3::Y) && near(plane("YZ").normal(), Vec3::X));
+        let axes = crate::view::construction_axes(&s);
+        let axis = |n: &str| axes.iter().find(|a| a.1 == format!("{name}:{n}")).map(|a| (a.2, a.3)).unwrap();
+        assert!(near(axis("X").1, Vec3::X) && near(axis("Y").1, Vec3::Y) && near(axis("Z").1, Vec3::Z));
+        assert!(crate::view::construction_points(&s).iter().any(|p| p.1 == format!("{name}:O") && near(p.2, Vec3::new(10.0, 0.0, 0.0))));
+        assert_eq!(crate::view::coordinate_systems(&s).len(), 1);
+    }
+
+    #[test]
+    fn things_are_built_on_its_parts_by_name() {
+        let mut s = Session::default();
+        let name = csys(&mut s);
+        // A sketch on its plane, a plane offset from it, an axis between its origin and a point.
+        run(&mut s, "sketch.create", json!({"plane": format!("{name}:XY"), "name":"On"}));
+        let plane = s.world_state().sketch(2).unwrap().plane;
+        assert!(near(plane.origin, Vec3::new(10.0, 0.0, 0.0)), "{plane:?}");
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "construct.plane.offset", json!({"base": format!("{name}:XY"), "offset":"4 mm", "name":"Up"}));
+        let up = crate::view::construction_planes(&s).into_iter().find(|p| p.1 == "Up").unwrap().2;
+        assert!(near(up.origin, Vec3::new(10.0, 0.0, 4.0)), "{up:?}");
+        run(&mut s, "construct.axis.edge", json!({"edge": {"axis": format!("{name}:Z")}, "name":"Along"}));
+    }
+
+    #[test]
+    fn the_other_ways_make_the_same_kind_of_system() {
+        let mut s = Session::default();
+        // A frame whose y is not perpendicular: it is made so, on the side it points.
+        run(&mut s, "construct.csys.frame", json!({"origin":[0,0,0],"x_dir":[1,0,0],"y_dir":[1,2,0],"name":"A"}));
+        let a = crate::view::coordinate_systems(&s).into_iter().find(|c| c.1 == "A").unwrap().2;
+        assert!(near(a.x, Vec3::X) && near(a.y, Vec3::Y), "{a:?}");
+        // On a plane: its axes, with an origin of its own moved onto it.
+        run(&mut s, "construct.csys.on_plane", json!({"plane":"XZ","origin":{"point":[3,9,5]},"name":"B"}));
+        let b = crate::view::coordinate_systems(&s).into_iter().find(|c| c.1 == "B").unwrap().2;
+        assert!(near(b.origin, Vec3::new(3.0, 0.0, 5.0)) && near(b.normal(), Vec3::Y), "{b:?}");
+    }
+
+    #[test]
+    fn the_work_coordinate_system_is_the_worlds_until_one_is_named() {
+        let mut s = Session::default();
+        assert!(near(crate::view::work_frame(&s).origin, Vec3::ZERO));
+        let name = csys(&mut s);
+        run(&mut s, "csys.set_work", json!({"csys": name}));
+        assert!(near(crate::view::work_frame(&s).origin, Vec3::new(10.0, 0.0, 0.0)));
+        // The design records it; undo takes it back.
+        let saved = s.doc.to_json();
+        let back = solidcraft_doc::Document::from_json(&saved).unwrap();
+        assert!(back.work_csys.is_some(), "{saved}");
+        run(&mut s, "csys.set_work", json!({}));
+        assert!(near(crate::view::work_frame(&s).origin, Vec3::ZERO), "cleared");
+        run(&mut s, "csys.set_work", json!({"csys": name}));
+        run(&mut s, "timeline.delete", json!({"features":[name]}));
+        assert!(near(crate::view::work_frame(&s).origin, Vec3::ZERO), "a deleted system is no longer the work one");
+    }
+
+    #[test]
+    fn hostile_input_is_refused_not_panicked_on() {
+        let mut s = Session::default();
+        for (id, p) in [
+            ("construct.csys.frame", json!({"origin":[0,0,0],"x_dir":[0,0,0],"y_dir":[0,1,0]})),
+            ("construct.csys.frame", json!({"origin":[0,0,0],"x_dir":[1,0,0],"y_dir":[2,0,0]})),
+            ("construct.csys.frame", json!({"origin":[0,0],"x_dir":[1,0,0],"y_dir":[0,1,0]})),
+            ("construct.csys.three_points", json!({"origin":{"point":[0,0,0]},"x":{"point":[0,0,0]},"y":{"point":[0,1,0]}})),
+            ("construct.csys.three_points", json!({"origin":{"point":[0,0,0]}})),
+            ("construct.csys.on_plane", json!({})),
+            ("csys.set_work", json!({"csys":"nothing"})),
+            ("csys.set_work", json!({"csys":[1]})),
+            ("datum.csys", json!({"type":"spiral"})),
+            ("datum.csys", json!({})),
+        ] {
+            let before = s.doc.features.len();
+            assert!(s.execute(id, &p).is_err(), "{id} {p}");
+            assert_eq!(s.doc.features.len(), before, "{id} left a feature behind");
+        }
     }
 }

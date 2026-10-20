@@ -84,6 +84,8 @@ construction_point_planes
   moves: def.a.plane.axis_dir[0], def.a.plane.axis_dir[1], def.a.plane.axis_origin[0], def.a.plane.axis_origin[1], def.a.plane.axis_origin[2], def.b.plane.axis_dir[0], def.b.plane.axis_dir[1], def.b.plane.axis_origin[0], def.b.plane.axis_origin[1], def.b.plane.axis_origin[2], def.c.plane.axis_dir[0], def.c.plane.axis_dir[1], def.c.plane.axis_origin[0], def.c.plane.axis_origin[1], def.c.plane.axis_origin[2]
 construction_point_along
   moves: def.path.at[0], def.path.at[1], def.path.at[2]
+construction_csys
+  moves: def.origin.p[0], def.origin.p[1], def.origin.p[2], def.plane.plane.axis_dir[0], def.plane.plane.axis_dir[1], def.plane.plane.axis_origin[0], def.plane.plane.axis_origin[1], def.plane.plane.axis_origin[2]
 split_face
   moves: faces[0][0], faces[0][1], faces[0][2], plane.axis_dir[0], plane.axis_dir[1], plane.axis_origin[0], plane.axis_origin[1], plane.axis_origin[2], tool.point[0], tool.point[1], tool.point[2]
   face points: [0, 0, 0]

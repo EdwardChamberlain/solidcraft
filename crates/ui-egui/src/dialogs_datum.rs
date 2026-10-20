@@ -22,6 +22,7 @@ pub enum Class {
     Plane,
     Axis,
     Point,
+    Csys,
 }
 
 /// One construction method of the shared dialog: the command, and its inputs as
@@ -40,6 +41,14 @@ const POINT_REF: Accept = selection::VERTICES | POINTS;
 const LINE_REF: Accept = EDGES | AXES;
 
 pub static METHODS: &[Method] = &[
+    Method {
+        class: Class::Csys,
+        cmd: "construct.csys.three_points",
+        label: "Origin, X Point, Y Point",
+        inputs: &[("origin", "Origin", POINT_REF), ("x", "X point", POINT_REF), ("y", "Y point", POINT_REF)],
+        value: None,
+    },
+    Method { class: Class::Csys, cmd: "construct.csys.on_plane", label: "On Plane or Face", inputs: &[("plane", "Plane", PLANE_REF)], value: None },
     Method {
         class: Class::Axis,
         cmd: "construct.axis.through_cylinder",
@@ -161,6 +170,7 @@ pub fn class_title(kind: &Kind) -> Option<&'static str> {
         Class::Plane => "DATUM PLANE",
         Class::Axis => "DATUM AXIS",
         Class::Point => "DATUM POINT",
+        Class::Csys => "DATUM CSYS",
     })
 }
 
@@ -298,6 +308,8 @@ pub fn infer(app: &SolveApp, d: &Dialog) -> Result<(&'static str, Value), String
             p["t"] = json!(value);
             ("construct.plane.along_path", p)
         }
+        (Class::Csys, (1, 0, 0, 0)) => ("construct.csys.on_plane", refs(&planes, &["plane"])?),
+        (Class::Csys, (0, 0, 0, 3)) => ("construct.csys.three_points", refs(&points, &["origin", "x", "y"])?),
         (Class::Axis, (0, 1, 0, 0)) => ("construct.axis.through_cylinder", refs(&curved, &["face"])?),
         (Class::Axis, (0, 0, 1, 0)) => ("construct.axis.edge", refs(&lines, &["edge"])?),
         (Class::Axis, (0, 0, 0, 2)) => ("construct.axis.two_points", refs(&points, &["a", "b"])?),
@@ -331,6 +343,7 @@ fn class_name(class: Class) -> &'static str {
         Class::Plane => "plane",
         Class::Axis => "axis",
         Class::Point => "point",
+        Class::Csys => "coordinate system",
     }
 }
 
@@ -429,6 +442,11 @@ pub fn refill(app: &SolveApp, kind: &FeatureKind) -> Option<Dialog> {
             PointDef::Center { of } => ("construct.point.center", vec![of], None),
             PointDef::EdgeAndPlane { edge, plane } => ("construct.point.edge_plane", vec![edge, plane], None),
             PointDef::AlongPath { path, t } => ("construct.point.along_path", vec![path], Some(t.to_string())),
+        },
+        FeatureKind::ConstructionCsys { def } => match def {
+            solidcraft_engine::doc::construct::CsysDef::ThreePoints { origin, x, y } => ("construct.csys.three_points", vec![origin, x, y], None),
+            solidcraft_engine::doc::construct::CsysDef::OnPlane { plane, .. } => ("construct.csys.on_plane", vec![plane], None),
+            solidcraft_engine::doc::construct::CsysDef::Frame { .. } => return None,
         },
         FeatureKind::ConstructionPlane { plane } => match plane {
             PlaneRef::TwoEdges { a, b } => ("construct.plane.two_edges", vec![a, b], None),

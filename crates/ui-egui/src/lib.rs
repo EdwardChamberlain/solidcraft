@@ -126,6 +126,8 @@ pub use file_picker::FilePickerFuture;
 mod blend_arrow_tests;
 #[cfg(test)]
 mod boundary_dialog_tests;
+#[cfg(test)]
+mod csys_tests;
 pub(crate) mod display_lod;
 #[cfg(test)]
 mod file_load_ui_tests;

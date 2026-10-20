@@ -566,10 +566,7 @@ pub fn point(app: &SolveApp, d: &Dialog, index: usize) -> Result<Option<Vec3>, S
         }
     };
     match spec.id() {
-        "inferred" if first.is_none() && spec.fallback == Fallback::WorkpieceOrigin => {
-            let m = app.session.active_component_frame();
-            Ok(Some(solidcraft_engine::doc::apply_point(&m, Vec3::ZERO)))
-        }
+        "inferred" if first.is_none() && spec.fallback == Fallback::WorkpieceOrigin => Ok(Some(work_axes(app).0)),
         "inferred" => at(first, "a point"),
         "existing" => at(first, "a point").and_then(|p| p.ok_or_else(|| "select a point first".to_string()).map(Some)),
         "midpoint" => at(first, "an edge").and_then(|p| p.ok_or_else(|| "select an edge first".to_string()).map(Some)),
@@ -581,12 +578,23 @@ pub fn point(app: &SolveApp, d: &Dialog, index: usize) -> Result<Option<Vec3>, S
             };
             Ok(Some(Vec3::new(value(0)?, value(1)?, value(2)?)))
         }
-        "origin" => {
-            let m = app.session.active_component_frame();
-            Ok(Some(solidcraft_engine::doc::apply_point(&m, Vec3::ZERO)))
-        }
+        "origin" => Ok(Some(work_axes(app).0)),
         _ => Ok(None),
     }
+}
+
+/// The work coordinate system as the specifiers use it: the origin, and the x, y and z axes, in
+/// the active component's frame.
+fn work_axes(app: &SolveApp) -> (Vec3, Vec3, Vec3, Vec3) {
+    let w = solidcraft_engine::view::work_frame(&app.session);
+    let m = app.session.active_component_frame();
+    let (o, x, y, z) = (w.origin, w.x, w.y, w.normal());
+    (
+        solidcraft_engine::doc::apply_point(&m, o),
+        solidcraft_engine::doc::apply_vector(&m, x),
+        solidcraft_engine::doc::apply_vector(&m, y),
+        solidcraft_engine::doc::apply_vector(&m, z),
+    )
 }
 
 /// The direction a Vector specifier stands for (Reverse applied), or `None` when nothing is
@@ -601,11 +609,15 @@ pub fn vector_raw(app: &SolveApp, d: &Dialog, index: usize) -> Result<Option<Vec
     let spec = d.specs.get(index).ok_or("no such input")?;
     let items = picks(d, index);
     let dir = match spec.id() {
-        "axis" => match spec.values.first().map(String::as_str) {
-            Some("Y") => Some(Vec3::Y),
-            Some("Z") => Some(Vec3::Z),
-            _ => Some(Vec3::X),
-        },
+        // The work coordinate system's axes (the world's until one is named).
+        "axis" => {
+            let (_, x, y, z) = work_axes(app);
+            match spec.values.first().map(String::as_str) {
+                Some("Y") => Some(y),
+                Some("Z") => Some(z),
+                _ => Some(x),
+            }
+        }
         "points" => {
             let inputs = inputs_of(d, index);
             let at = |i: usize| inputs.get(i).and_then(|inp| inp.items.first()).and_then(|s| point_of(app, s));
@@ -616,7 +628,7 @@ pub fn vector_raw(app: &SolveApp, d: &Dialog, index: usize) -> Result<Option<Vec
         }
         "inferred" => match items.as_slice() {
             [] => match spec.fallback {
-                Fallback::XAxis => Some(Vec3::X),
+                Fallback::XAxis => Some(work_axes(app).1),
                 _ => None,
             },
             [one] => Some(direction_of(app, one).ok_or("that has no direction")?),
@@ -729,7 +741,7 @@ pub fn line(app: &SolveApp, d: &Dialog, index: usize) -> Result<Option<(Vec3, Ve
     let found = match spec.id() {
         "axis" => {
             let dir = vector_raw(app, d, index)?.ok_or("no direction")?;
-            Some((solidcraft_engine::doc::apply_point(&app.session.active_component_frame(), Vec3::ZERO), dir))
+            Some((work_axes(app).0, dir))
         }
         "points" => {
             let dir = vector_raw(app, d, index)?.ok_or("select both points first")?;

@@ -85,12 +85,41 @@ pub enum PointDef {
     AlongPath { path: GeoRef, t: crate::Expr },
 }
 
+/// How a coordinate system (a datum CSYS) is defined. Its frame is a [`Plane`]: the origin, the
+/// x axis and the y axis (the z axis is their cross product).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum CsysDef {
+    /// The origin, a point on the +X axis and a point in the XY plane on the +Y side.
+    ThreePoints { origin: GeoRef, x: GeoRef, y: GeoRef },
+    /// On a plane or planar face: its axes, the origin at `origin` (moved onto the plane) or the
+    /// plane's own.
+    OnPlane {
+        plane: GeoRef,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<GeoRef>,
+    },
+    /// Given outright (the x and y directions are made perpendicular, x first).
+    Frame { origin: Vec3, x_dir: Vec3, y_dir: Vec3 },
+}
+
+/// The names of the planes, axes and point a coordinate system offers, after its own name and a
+/// colon (`Csys1:XY`, `Csys1:X`, `Csys1:O`).
+pub const CSYS_PLANES: [&str; 3] = ["XY", "XZ", "YZ"];
+pub const CSYS_AXES: [&str; 3] = ["X", "Y", "Z"];
+pub const CSYS_ORIGIN: &str = "O";
+
 /// Resolved construction geometry, kept in the model state by feature.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ConstructGeom {
     Plane(Plane),
-    Axis { origin: Vec3, dir: Vec3 },
+    Axis {
+        origin: Vec3,
+        dir: Vec3,
+    },
     Point(Vec3),
+    /// A coordinate system: origin and axes (its planes, axes and origin are entries of their own).
+    Csys(Plane),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -578,6 +607,69 @@ impl GeoRef {
             _ => {}
         }
     }
+}
+
+impl CsysDef {
+    pub fn refs(&self) -> Vec<&GeoRef> {
+        match self {
+            CsysDef::ThreePoints { origin, x, y } => vec![origin, x, y],
+            CsysDef::OnPlane { plane, origin } => std::iter::once(plane).chain(origin.as_ref()).collect(),
+            CsysDef::Frame { .. } => Vec::new(),
+        }
+    }
+
+    pub fn refs_mut(&mut self) -> Vec<&mut GeoRef> {
+        match self {
+            CsysDef::ThreePoints { origin, x, y } => vec![origin, x, y],
+            CsysDef::OnPlane { plane, origin } => std::iter::once(plane).chain(origin.as_mut()).collect(),
+            CsysDef::Frame { .. } => Vec::new(),
+        }
+    }
+}
+
+/// The frame a coordinate system definition makes.
+pub(crate) fn resolve_csys(ctx: &Ctx, d: &CsysDef) -> Result<Plane> {
+    let frame = |origin: Vec3, x: Vec3, y: Vec3| -> Result<Plane> {
+        let x = x.normalized().ok_or_else(|| bad("the x direction has no length"))?;
+        // y made perpendicular to x, on the side the given y points.
+        let y = (y - x * y.dot(x)).normalized().ok_or_else(|| bad("the y direction lies along the x axis"))?;
+        Plane::new(origin, x, y).ok_or_else(|| bad("degenerate coordinate system"))
+    };
+    match d {
+        CsysDef::ThreePoints { origin, x, y } => {
+            let o = point(ctx, origin)?;
+            frame(o, point(ctx, x)? - o, point(ctx, y)? - o)
+        }
+        CsysDef::OnPlane { plane: p, origin } => {
+            let pl = plane(ctx, p)?;
+            let o = match origin {
+                Some(g) => {
+                    let q = point(ctx, g)?;
+                    q - pl.normal() * (q - pl.origin).dot(pl.normal())
+                }
+                None => pl.origin,
+            };
+            Plane::new(o, pl.x, pl.y).ok_or_else(|| bad("degenerate plane"))
+        }
+        CsysDef::Frame { origin, x_dir, y_dir } => frame(*origin, *x_dir, *y_dir),
+    }
+}
+
+/// The planes, axes and origin of a coordinate system, each named after it (`Name:XY`…).
+pub fn csys_parts(name: &str, f: &Plane) -> Vec<(String, ConstructGeom)> {
+    let (o, x, y) = (f.origin, f.x, f.y);
+    let z = f.normal();
+    let mut v = Vec::new();
+    for (suffix, plane) in [("XY", Plane::new(o, x, y)), ("XZ", Plane::new(o, x, -z)), ("YZ", Plane::new(o, y, z))] {
+        if let Some(pl) = plane {
+            v.push((format!("{name}:{suffix}"), ConstructGeom::Plane(pl)));
+        }
+    }
+    for (suffix, dir) in [("X", x), ("Y", y), ("Z", z)] {
+        v.push((format!("{name}:{suffix}"), ConstructGeom::Axis { origin: o, dir }));
+    }
+    v.push((format!("{name}:{CSYS_ORIGIN}"), ConstructGeom::Point(o)));
+    v
 }
 
 impl AxisDef {

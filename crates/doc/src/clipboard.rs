@@ -207,6 +207,11 @@ impl crate::Feature {
                     checked_geo(r, 0)?;
                 }
             }
+            K::ConstructionCsys { def } => {
+                for r in def.refs() {
+                    checked_geo(r, 0)?;
+                }
+            }
             _ => {}
         }
         self.kind.remap_refs(ids, names);
@@ -261,6 +266,11 @@ impl crate::Feature {
                 }
             }
             K::ConstructionPoint { def } => {
+                for r in def.refs_mut() {
+                    remap_geo(r, ids, names, bodies, 0)?;
+                }
+            }
+            K::ConstructionCsys { def } => {
                 for r in def.refs_mut() {
                     remap_geo(r, ids, names, bodies, 0)?;
                 }

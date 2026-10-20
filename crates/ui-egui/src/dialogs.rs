@@ -489,6 +489,7 @@ impl Dialog {
             "datum.plane" => crate::dialogs_datum::inferred(crate::dialogs_datum::Class::Plane),
             "datum.axis" => crate::dialogs_datum::inferred(crate::dialogs_datum::Class::Axis),
             "datum.point" => crate::dialogs_datum::inferred(crate::dialogs_datum::Class::Point),
+            "datum.csys" => crate::dialogs_datum::inferred(crate::dialogs_datum::Class::Csys),
             "sketch.reattach" => {
                 // The sketch being edited, or the one selected in the tree; its plane, direction
                 // and origin are the specifiers', left unspecified until one is given.
@@ -1518,10 +1519,12 @@ fn title(k: &Kind) -> &'static str {
             crate::dialogs_datum::Class::Axis => "DATUM AXIS",
             crate::dialogs_datum::Class::Point => "DATUM POINT",
             crate::dialogs_datum::Class::Plane => "DATUM PLANE",
+            crate::dialogs_datum::Class::Csys => "DATUM CSYS",
         },
         Kind::Datum { method, .. } => match crate::dialogs_datum::METHODS.get(*method).map(|m| m.class) {
             Some(crate::dialogs_datum::Class::Axis) => "DATUM AXIS",
             Some(crate::dialogs_datum::Class::Point) => "DATUM POINT",
+            Some(crate::dialogs_datum::Class::Csys) => "DATUM CSYS",
             _ => "DATUM PLANE",
         },
         Kind::PathPlane { .. } => "PLANE ALONG PATH",

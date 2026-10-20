@@ -21,9 +21,20 @@ struct Graph {
     /// The bodies each feature made or changed, by name: new in its result, or changed from the
     /// result before it.
     touched: HashMap<u64, Vec<String>>,
-    /// The features each feature is built on: its sketches, the features and bodies it names, and
-    /// the earlier features that made or changed the bodies it works on.
+    /// The features each feature requires: its sketches, the features it names, the features
+    /// that made the faces and edges it picked (their persistent names say which), and, when it
+    /// works on a body without picking any of its geometry (a join, a cut), the feature that made
+    /// the body. Not the features that happened to change the same body before it.
     parents: HashMap<u64, BTreeSet<u64>>,
+}
+
+/// The features a persistent name is made of: `F2:side:l1|F2:top` is built from feature 2. Only the
+/// first `F<id>` of each piece counts: a linked part's faces (`F3:F2:top`) belong to the link (3).
+fn named_features(names: &[String]) -> impl Iterator<Item = u64> + '_ {
+    names.iter().flat_map(|name| name.split('|')).filter_map(|piece| {
+        let digits: String = piece.strip_prefix('F')?.chars().take_while(char::is_ascii_digit).collect();
+        digits.parse().ok()
+    })
 }
 
 type Key = (u64, usize, usize, usize);
@@ -36,33 +47,49 @@ fn build(app: &SolveApp) -> Graph {
     let doc = &app.session.doc;
     let results = &app.session.model.results;
     let mut g = Graph::default();
+    // The bodies that are new in each feature's result.
+    let mut born: HashMap<u64, Vec<String>> = HashMap::new();
     for (i, r) in results.iter().enumerate() {
         let before = i.checked_sub(1).and_then(|k| results.get(k));
-        let names = r
-            .state
-            .bodies
-            .iter()
-            .filter(|b| before.is_none_or(|p| p.state.body(&b.name).is_none_or(|old| old.content_key() != b.content_key())))
-            .map(|b| b.name.clone())
-            .collect();
+        let mut names = Vec::new();
+        let mut new = Vec::new();
+        for b in &r.state.bodies {
+            match before.and_then(|p| p.state.body(&b.name)) {
+                None => {
+                    names.push(b.name.clone());
+                    new.push(b.name.clone());
+                }
+                Some(old) if old.content_key() != b.content_key() => names.push(b.name.clone()),
+                Some(_) => {}
+            }
+        }
         g.touched.insert(r.id, names);
+        born.insert(r.id, new);
     }
     let by_name: HashMap<String, u64> = doc.features.iter().map(|f| (f.name.to_ascii_lowercase(), f.id)).collect();
-    // The last feature to make or change each body, as the features go by in order.
-    let mut last: HashMap<&str, u64> = HashMap::new();
+    // The feature that made each body, as the features go by in order.
+    let mut made: HashMap<&str, u64> = HashMap::new();
     for f in &doc.features {
         let (sketches, features, bodies) = f.kind.references();
         let mut parents = BTreeSet::new();
         parents.extend(sketches.into_iter().filter(|s| doc.feature(*s).is_some()));
         parents.extend(features.iter().filter_map(|n| by_name.get(&n.to_ascii_lowercase()).copied()));
-        let mine = g.touched.get(&f.id).map(Vec::as_slice).unwrap_or_default();
-        for name in bodies.iter().map(String::as_str).chain(mine.iter().map(String::as_str)) {
-            parents.extend(last.get(name).copied());
+        let picked: BTreeSet<u64> =
+            named_features(&f.edge_names).chain(named_features(&f.face_names)).filter(|id| doc.feature(*id).is_some()).collect();
+        let picks_geometry = !picked.is_empty();
+        parents.extend(picked);
+        if !picks_geometry {
+            // No faces or edges picked: the bodies it works on, as whole bodies, are what it needs.
+            let mine = g.touched.get(&f.id).map(Vec::as_slice).unwrap_or_default();
+            let new = born.get(&f.id).map(Vec::as_slice).unwrap_or_default();
+            for name in bodies.iter().chain(mine.iter().filter(|n| !new.contains(n))) {
+                parents.extend(made.get(name.as_str()).copied());
+            }
         }
         parents.remove(&f.id);
         g.parents.insert(f.id, parents);
-        for name in mine {
-            last.insert(name.as_str(), f.id);
+        for name in born.get(&f.id).into_iter().flatten() {
+            made.insert(name.as_str(), f.id);
         }
     }
     g
@@ -286,5 +313,71 @@ mod tests {
         let base = id_of(&h, "Base");
         let r = related(&h.app, base);
         assert!(!r.children.is_empty() && r.parents.is_empty(), "{r:?}");
+    }
+
+    /// A block with a chamfer on each of three edges, and a fillet on an edge the first chamfer made.
+    fn chamfers() -> Harness {
+        let mut h = Harness::new();
+        h.app.preferences.modelling_approach = ModellingApproach::Advanced;
+        h.app.run("sketch.create", json!({"plane":"XY","name":"Base"})).unwrap();
+        h.app.run("sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[20,10]})).unwrap();
+        h.app.run("sketch.finish", json!({})).unwrap();
+        h.app.run("solid.extrude", json!({"sketch":"Base","distance":"10 mm","operation":"new","body_name":"Main"})).unwrap();
+        h.app.run("solid.chamfer", json!({"edges":[[10,0,10]],"distance":"1 mm","name":"Chamfer A"})).unwrap();
+        h.app.run("solid.chamfer", json!({"edges":[[10,10,10]],"distance":"1 mm","name":"Chamfer B"})).unwrap();
+        h.app.run("solid.chamfer", json!({"edges":[[0,5,10]],"distance":"1 mm","name":"Chamfer C"})).unwrap();
+        // An edge of Chamfer A's own face: it needs Chamfer A.
+        h.app.run("solid.fillet", json!({"edges":[[10,0,9]],"radius":"0.3 mm","name":"Round A"})).unwrap();
+        h.frames(2);
+        h
+    }
+
+    #[test]
+    fn chamfers_on_the_same_body_are_not_parents_of_each_other() {
+        let h = chamfers();
+        let (extrude, a, b, c) = (id_of(&h, "Extrude1"), id_of(&h, "Chamfer A"), id_of(&h, "Chamfer B"), id_of(&h, "Chamfer C"));
+        for chamfer in [a, b, c] {
+            let r = related(&h.app, chamfer);
+            assert_eq!(r.parents, BTreeSet::from([extrude]), "a chamfer needs the extrude that made its edge, nothing else: {r:?}");
+        }
+        assert!(related(&h.app, b).children.is_empty() && related(&h.app, c).children.is_empty(), "nothing is built on Chamfer B or C");
+        assert!(!related(&h.app, extrude).parents.contains(&a));
+    }
+
+    #[test]
+    fn a_feature_on_an_edge_a_chamfer_made_is_its_child() {
+        let h = chamfers();
+        let (a, b, round) = (id_of(&h, "Chamfer A"), id_of(&h, "Chamfer B"), id_of(&h, "Round A"));
+        let r = related(&h.app, round);
+        assert!(r.parents.contains(&a), "the fillet is on Chamfer A's edge: {r:?}");
+        assert!(!r.parents.contains(&b), "and not on Chamfer B's");
+        assert!(related(&h.app, a).children.contains(&round));
+        assert!(related(&h.app, b).children.is_empty());
+    }
+
+    #[test]
+    fn a_join_without_picked_geometry_needs_the_feature_that_made_the_body() {
+        let mut h = Harness::new();
+        h.app.preferences.modelling_approach = ModellingApproach::Advanced;
+        h.app.run("sketch.create", json!({"plane":"XY","name":"Base"})).unwrap();
+        h.app.run("sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[20,10]})).unwrap();
+        h.app.run("sketch.finish", json!({})).unwrap();
+        h.app.run("solid.extrude", json!({"sketch":"Base","distance":"10 mm","operation":"new","body_name":"Main"})).unwrap();
+        h.app.run("solid.chamfer", json!({"edges":[[10,0,10]],"distance":"1 mm","name":"Chamfer A"})).unwrap();
+        h.app.run("sketch.create", json!({"plane":"XY","offset":"10 mm","name":"Boss"})).unwrap();
+        h.app.run("sketch.circle.center", json!({"center":[10,5],"diameter":4})).unwrap();
+        h.app.run("sketch.finish", json!({})).unwrap();
+        h.app.run("solid.extrude", json!({"sketch":"Boss","distance":"5 mm","operation":"join","name":"Boss Extrude"})).unwrap();
+        h.frames(2);
+        let r = related(&h.app, id_of(&h, "Boss Extrude"));
+        assert!(r.parents.contains(&id_of(&h, "Boss")), "its sketch: {r:?}");
+        assert!(r.parents.contains(&id_of(&h, "Extrude1")), "the body it joins was made by the first extrude: {r:?}");
+        assert!(!r.parents.contains(&id_of(&h, "Chamfer A")), "a chamfer that only changed the body is not required: {r:?}");
+    }
+
+    #[test]
+    fn a_linked_part_name_belongs_to_the_link() {
+        let names = ["F3:F2:top".to_string(), "F4:side|F3:F9:x".to_string(), "G1:nothing".to_string(), "F:bad".to_string()];
+        assert_eq!(super::named_features(&names).collect::<Vec<_>>(), vec![3, 4, 3]);
     }
 }

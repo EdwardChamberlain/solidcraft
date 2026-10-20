@@ -220,6 +220,40 @@ pub fn add(app: &SolveApp, d: &mut Dialog, mut spec: Specifier) {
     d.specs.push(spec);
 }
 
+/// Replace the dialog's input `at` (a plane to pick, say) by a specifier's: same place, the same
+/// picks kept as far as the specifier's first input takes them.
+pub fn convert_input(app: &SolveApp, d: &mut Dialog, at: usize, mut spec: Specifier) {
+    let owner = d.specs.len() + 1;
+    let old = d.inputs.get(at).map(|i| i.items.clone()).unwrap_or_default();
+    let mut inputs = spec.inputs(app);
+    for input in &mut inputs {
+        input.owner = owner;
+    }
+    if let Some(first) = inputs.first_mut() {
+        first.items = old.into_iter().filter(|s| dialogs::fits(first.accept, s)).collect();
+    }
+    spec.count = inputs.len();
+    if at < d.inputs.len() {
+        d.inputs.remove(at);
+    }
+    for (n, input) in inputs.into_iter().enumerate() {
+        d.inputs.insert((at + n).min(d.inputs.len()), input);
+    }
+    d.specs.push(spec);
+}
+
+/// The plane a Plane specifier stands for as a command's `plane` parameter takes it (a name, or an
+/// origin and normal for a face), with the commands that make a plane the specifier defines
+/// first (none for a plane or face that is picked).
+pub fn plane_value(app: &SolveApp, d: &Dialog, index: usize) -> Result<(Vec<(String, Value)>, Value), String> {
+    let out = plane(app, d, index)?;
+    let value = match &out.sel {
+        Some(sel) => dialogs::plane_value(&app.session, Some(sel)).ok_or("that is not a plane or a planar face")?,
+        None => out.plane.clone(),
+    };
+    Ok((out.prefix, value))
+}
+
 /// The dialog's inputs that belong to specifier `index`.
 fn indices(d: &Dialog, index: usize) -> Vec<usize> {
     d.inputs.iter().enumerate().filter(|(_, i)| i.owner == index + 1).map(|(k, _)| k).collect()
@@ -659,7 +693,7 @@ pub struct PlaneOut {
 /// A name for a datum plane the dialog makes, not yet used in the design or by an earlier one.
 fn fresh_name(app: &SolveApp, used: &[String]) -> String {
     (1..)
-        .map(|k| format!("Sketch Plane {k}"))
+        .map(|k| format!("Datum Plane {k}"))
         .find(|n| app.session.doc.find_feature(n).is_none() && !used.iter().any(|u| u.eq_ignore_ascii_case(n)))
         .unwrap_or_else(|| "Sketch Plane".to_string())
 }

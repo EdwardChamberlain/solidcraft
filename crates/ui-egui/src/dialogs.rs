@@ -781,6 +781,18 @@ impl Dialog {
         {
             inp.items = default_profiles(s);
         }
+        // Advanced: a revolve's axis is a vector, with a point on it.
+        if id == "solid.revolve" && app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced {
+            use crate::specifier::{Class, Specifier, add};
+            // Its input is the Axis input of the command, in the same place (the second); what was
+            // picked for it before stays.
+            let picked = d.inputs.get(1).map(|i| i.items.clone()).unwrap_or_default();
+            d.inputs.truncate(1);
+            add(app, &mut d, Specifier::new(Class::Vector, 0));
+            if let Some(input) = d.inputs.get_mut(1) {
+                input.items = picked.into_iter().filter(|s| fits(input.accept, s)).collect();
+            }
+        }
         // Advanced: the extrude's direction is a vector (the profile normal unless one is given).
         if id == "solid.extrude" && app.preferences.modelling_approach == crate::prefs::ModellingApproach::Advanced {
             use crate::specifier::{Class, Specifier, add};
@@ -2486,6 +2498,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     enter |= sketch_specifier_rows(app, &mut d, ui);
                 } else if advanced && matches!(d.kind, Kind::Extrude { .. }) && !d.specs.is_empty() {
                     enter |= crate::dialogs_extrude::rows(app, &mut d, ui);
+                } else if advanced && matches!(d.kind, Kind::Revolve { .. }) && !d.specs.is_empty() {
+                    enter |= crate::dialogs_revolve::rows(app, &mut d, ui);
                 } else {
                     input_rows(&mut d, ui, &app.session);
                 }
@@ -2514,7 +2528,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             ui.end_row();
                         }
                     }
-                    Kind::Extrude { .. } if advanced && !d.specs.is_empty() => {}
+                    Kind::Extrude { .. } | Kind::Revolve { .. } if advanced && !d.specs.is_empty() => {}
                     Kind::Extrude {
                         distance,
                         direction,
@@ -3576,7 +3590,7 @@ fn extra_check(ui: &mut egui::Ui, extra: &mut serde_json::Map<String, Value>, ke
 }
 
 /// A value field stored in the dialog's extra parameters (`default` until edited).
-fn extra_field(ui: &mut egui::Ui, extra: &mut serde_json::Map<String, Value>, key: &str, default: &str) -> bool {
+pub(crate) fn extra_field(ui: &mut egui::Ui, extra: &mut serde_json::Map<String, Value>, key: &str, default: &str) -> bool {
     let mut v = extra.get(key).and_then(Value::as_str).unwrap_or(default).to_string();
     let enter = field(ui, &mut v);
     extra.insert(key.into(), json!(v));
@@ -4168,10 +4182,14 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         }
         Kind::Revolve { angle, operation, axis: stored_axis } => {
             need(0, "profiles")?;
-            let axis = match sels(d, 1).first() {
-                Some(Sel::Axis { name }) => json!(name),
-                Some(Sel::SketchCurve { id }) => json!(id),
-                _ => stored_axis.clone().ok_or("select an axis")?,
+            let axis = if crate::dialogs_revolve::specified(d) {
+                crate::dialogs_revolve::axis_param(app, d)?
+            } else {
+                match sels(d, 1).first() {
+                    Some(Sel::Axis { name }) => json!(name),
+                    Some(Sel::SketchCurve { id }) => json!(id),
+                    _ => stored_axis.clone().ok_or("select an axis")?,
+                }
             };
             let (sketch, idx) = profiles();
             let mut p =

@@ -498,3 +498,46 @@ pub fn starts_on_pick(app: &SolveApp, d: &Dialog) -> bool {
         && d.specs.first().is_some_and(|s| matches!(s.id(), "inferred" | "plane"))
         && plane(app, d, 0).is_ok_and(|p| p.prefix.is_empty() && p.sel.is_some())
 }
+
+/// A pick as a line: a point on it and its direction (an axis, an edge or sketch line, the normal
+/// of a plane or face through the picked point).
+fn line_of(app: &SolveApp, sel: &Sel) -> Option<(Vec3, Vec3)> {
+    match sel {
+        Sel::Plane { name } => dialogs::plane_by_name(app, name).and_then(|p| p.normal().normalized().map(|n| (p.origin, n))),
+        other => crate::dialogs_specify::vector_of(app, other),
+    }
+}
+
+/// The line a Vector specifier stands for (Reverse applied): a point on it and its direction, for
+/// an input that is an axis (a revolve's) rather than a direction. `None` when nothing is
+/// specified.
+pub fn line(app: &SolveApp, d: &Dialog, index: usize) -> Result<Option<(Vec3, Vec3)>, String> {
+    let spec = d.specs.get(index).ok_or("no such input")?;
+    let items = picks(d, index);
+    let found = match spec.id() {
+        "axis" => {
+            let dir = vector_raw(app, d, index)?.ok_or("no direction")?;
+            Some((solidcraft_engine::doc::apply_point(&app.session.active_component_frame(), Vec3::ZERO), dir))
+        }
+        "points" => {
+            let dir = vector_raw(app, d, index)?.ok_or("select both points first")?;
+            let inputs = inputs_of(d, index);
+            let from = inputs.first().and_then(|i| i.items.first()).and_then(|s| point_of(app, s)).ok_or("select both points first")?;
+            Some((from, dir))
+        }
+        "inferred" => match items.as_slice() {
+            [] => None,
+            [one] => Some(line_of(app, one).ok_or("that is not a line, an edge or a face")?),
+            [a, b] => match (point_of(app, a), point_of(app, b)) {
+                (Some(a), Some(b)) => Some((a, (b - a).normalized().ok_or("the two points are the same")?)),
+                _ => return Err("pick one edge, axis or face, or two points".into()),
+            },
+            _ => return Err("pick one edge, axis or face, or two points".into()),
+        },
+        _ => match items.first() {
+            Some(s) => Some(line_of(app, s).ok_or("that is not a line, an edge or a face")?),
+            None => return Err("select what gives the axis first".into()),
+        },
+    };
+    Ok(found.map(|(p, v)| (p, if spec.reverse { -v } else { v })))
+}

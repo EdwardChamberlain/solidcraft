@@ -108,8 +108,10 @@ is built and what is not yet.
 
 **Mate** (Assembly tab, `mate.create`) positions one component against another from two picked faces.
 Touch puts the faces together (outsides meeting), Align makes them face the same way, Distance is
-Touch with a gap, Concentric lines two round faces up on one axis. A mate is a joint underneath
-(touch, align and distance are planar joints, concentric a cylindrical one), so it is listed,
+Touch with a gap, Concentric lines two round faces up on one axis, Parallel, Perpendicular and
+Angle hold the faces parallel, square or at an angle while the part slides freely, and Fix grounds
+the face's component. A mate is a joint underneath (touch, align and distance are planar joints,
+concentric a cylindrical one, the three orientation mates a `parallel` joint with a `tilt`), so it is listed,
 edited and driven as one, and its faces are kept by their persistent names, which now reach
 through linked parts: the mate follows the face when the part changes shape.
 
@@ -120,6 +122,6 @@ through linked parts: the mate follows the face when the part changes shape.
 - Referring to the assembly's geometry from the work part (picking a face of another component, or
   linking to it): the context is drawn but is not pickable.
 - A shared evaluation between a part open in a tab and the same part linked in an assembly.
-- Mates that remove all remaining freedom (a mate is a planar or cylindrical joint: the part still slides along the face).
+- Mates that remove all remaining freedom except by stacking them (each mate is one joint: the part still slides along the face).
 - The linear pattern's direction pickers, the circular pattern's axis and Section's plane are still plain inputs (the feature pattern's own layout and the commands' parameters need more than the selector rows give), and Specify Point does not take a sketch point.
 - Drawings and direct face editing are out of scope for this approach.

@@ -966,6 +966,7 @@ mod tests {
             flip: false,
             offset: 0.0,
             angle: 0.0,
+            tilt: 0.0,
             suppressed: false,
         };
         let occ = |id: u64, grounded: bool| crate::Occurrence { id, component: id, parent: 0, name: format!("O{id}"), transform: IDENTITY, grounded };

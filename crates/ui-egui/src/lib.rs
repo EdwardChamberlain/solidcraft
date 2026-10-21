@@ -58,6 +58,7 @@ mod dimension_create_ui_tests;
 pub mod documents;
 pub mod drag_snap;
 pub mod edit_clipboard;
+mod field_menu;
 #[cfg(test)]
 mod font_literals_tests;
 pub mod fonts;

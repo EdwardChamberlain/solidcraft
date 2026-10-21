@@ -422,6 +422,8 @@ impl Default for HoleOpts {
 
 #[derive(Clone, Debug)]
 pub struct Dialog {
+    /// Which dialog this is: a new one for each Apply and Reset.
+    pub(crate) uid: u64,
     pub kind: Kind,
     /// Selection inputs, in order; clicks in the viewport go to the active one.
     pub inputs: Vec<SelInput>,
@@ -563,7 +565,9 @@ impl Dialog {
 
     pub(crate) fn new(kind: Kind, inputs: Vec<SelInput>) -> Dialog {
         let chain_applied = matches!(kind, Kind::Fillet { chain: true, .. });
+        static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Dialog {
+            uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             kind,
             inputs,
             active: 0,
@@ -1983,6 +1987,12 @@ fn selection_label(s: &Session, item: &Sel) -> String {
         Sel::SketchCurve { id } => id.clone(),
         Sel::SketchPoint { id } => crate::sketch_modify_ui::point_id(s, item).unwrap_or(id).to_string(),
         Sel::Plane { name } | Sel::Axis { name } | Sel::Body { name } => name.clone(),
+        Sel::Face { body, index, .. } | Sel::Edge { body, index, .. } if crate::work_part::is_context(body) => {
+            let what = if matches!(item, Sel::Face { .. }) { "face" } else { "edge" };
+            let name = body.strip_prefix(crate::work_part::CONTEXT_PREFIX).unwrap_or(body);
+            format!("{name} (assembly) · {what} {index}")
+        }
+        Sel::Vertex { body, point } if crate::work_part::is_context(body) => format!("assembly ({:.2}, {:.2}, {:.2})", point.x, point.y, point.z),
         Sel::Face { body, index, .. } => format!("{body} · face {index}"),
         Sel::Edge { body, index, .. } => format!("{body} · edge {index}"),
         Sel::Feature { id } => s.doc.feature(*id).map(|f| f.name.clone()).unwrap_or_else(|| format!("Feature {id}")),
@@ -4205,6 +4215,8 @@ pub fn axis_of(app: &SolveApp, sel: &Sel) -> Option<(Vec3, Vec3)> {
             let (pa, pb) = (ss.plane.to_world(ss.sketch.point(a)?), ss.plane.to_world(ss.sketch.point(b)?));
             Some((pa, (pb - pa).normalized()?))
         }
+        // A straight edge of the assembly around a work part, along it.
+        Sel::Edge { body, index, .. } if crate::work_part::is_context(body) => crate::work_part::straight_edge(app, body, *index),
         // A straight model edge, along it.
         Sel::Edge { body, index, .. } => {
             let b = app.session.world_state().body(body).cloned()?;
@@ -4456,6 +4468,13 @@ fn construct_ref(app: &SolveApp, sel: &Sel) -> Result<Value, String> {
 pub(crate) fn plane_arg(app: &SolveApp, sel: Option<&Sel>) -> Result<Value, String> {
     match sel {
         Some(Sel::Plane { name }) => Ok(json!(name)),
+        // A face of the assembly around a work part: the plane it lies in, by value.
+        Some(Sel::Face { body, index, .. }) if crate::work_part::is_context(body) => {
+            let (origin, normal) = crate::work_part::planar_face(app, body, *index).ok_or("that face is not planar")?;
+            let plane = solidcraft_engine::geom::Plane::from_normal(origin, normal).ok_or("that face has no plane")?;
+            let v = |p: Vec3| json!([p.x, p.y, p.z]);
+            Ok(json!({"origin": v(plane.origin), "x_dir": v(plane.x), "y_dir": v(plane.y)}))
+        }
         Some(face @ Sel::Face { .. }) => crate::sketch_attachment_ui::face_plane(app, face).ok_or("the picked face is no longer in the model".into()),
         _ => Err("pick an origin or construction plane, or a planar face".into()),
     }

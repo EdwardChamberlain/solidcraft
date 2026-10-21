@@ -141,7 +141,10 @@ pub(crate) fn searchable_dropdown(
 /// Completion/focus implementation shared by field variants. Tokens: `same as field`.
 fn editor(ui: &mut Ui, value: &mut String, hint: &str, completion: bool) -> (bool, bool, Response) {
     let t = Tokens::get();
-    let width = dimension(ui.available_width());
+    // The Advanced approach's dialogs add a ▾ menu (Reset, Measure) beside their value fields.
+    let armed = if completion { crate::field_menu::armed(ui.ctx()) } else { None };
+    let button = if armed.is_some() { row_height() } else { 0.0 };
+    let width = (dimension(ui.available_width()) - button).max(0.0);
     let font = egui::FontId::monospace(t.font_label);
     let response = ui.add_sized(
         vec2(width, row_height()),
@@ -155,9 +158,55 @@ fn editor(ui: &mut Ui, value: &mut String, hint: &str, completion: bool) -> (boo
         info
     });
     super::layout::publish_geometry(ui, &response);
+    let mut changed = response.changed();
+    if let Some(armed) = armed {
+        changed |= value_menu(ui, &response, value, &armed);
+    }
     // A completion's Enter accepts the suggestion, rather than submitting the dialog.
     let completed = completion && crate::params_dialog::complete(ui, &response, value);
-    (!completed && response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)), response.changed(), response)
+    (!completed && response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)), changed, response)
+}
+
+/// The ▾ beside a value field: Reset to what the dialog opened with, and what the selection
+/// measures. True when it changed the value.
+fn value_menu(ui: &mut Ui, field: &Response, value: &mut String, armed: &crate::field_menu::Armed) -> bool {
+    let t = Tokens::get();
+    let initial_key = egui::Id::new(("sc_field_initial", armed.dialog, field.id));
+    let initial: String = ui.ctx().data_mut(|d| d.get_temp_mut_or_insert_with(initial_key, || value.clone()).clone());
+    let rect = egui::Rect::from_min_size(egui::pos2(field.rect.right() + t.space_2, field.rect.top()), vec2(row_height() - t.space_2, row_height()));
+    ui.allocate_rect(rect, egui::Sense::hover());
+    let button = ui.interact(rect, field.id.with("menu"), egui::Sense::click());
+    if button.hovered() {
+        ui.painter().rect_filled(rect, t.control_radius, t.hover);
+    }
+    super::dropdown_indicator(ui.painter(), rect, t.text_dim);
+    scenario::publish_handle(&format!("dialog:menu:{}", label(ui)), rect.center());
+    let mut changed = false;
+    let mut open = false;
+    egui::Popup::menu(&button).frame(super::Menu::frame()).show(|ui| {
+        open = true;
+        ui.set_min_width(t.form_label_width);
+        let reset = super::MenuItem { enabled: *value != initial, ..super::MenuItem::new("field_reset", "Reset", "") }.show(ui);
+        scenario::publish_handle("dialog:menu:Reset", reset.rect.center());
+        if reset.clicked() {
+            value.clone_from(&initial);
+            changed = true;
+            ui.close();
+        }
+        for (name, text) in &armed.measures {
+            let item = super::MenuItem::new("field_measure", name, "").show(ui);
+            scenario::publish_handle(&format!("dialog:measure:{name}"), item.rect.center());
+            if item.clicked() {
+                value.clone_from(text);
+                changed = true;
+                ui.close();
+            }
+        }
+    });
+    if open {
+        crate::field_menu::set_open(ui.ctx());
+    }
+    changed
 }
 
 /// The one dropdown arrow every kit dropdown draws (the kit chevron, dimmed), instead of egui's triangle.

@@ -72,8 +72,15 @@ in the part's frame (`work_part.rs`):
   the inverse of the component's placement, so the part sits where it was designed and the other
   components stand around it where they are in the assembly. Bodies hidden in the assembly stay
   hidden.
-- It is drawn, never picked: the part's own world has none of it, so no pick, dialog or feature can
-  name it. It updates when the assembly's tab changes, and is off when that tab is closed.
+- It is drawn, and picked only for the places a plane, vector or point selector names (below): the
+  part's own world has none of it, so no feature can name it. It updates when the assembly's tab
+  changes, and is off when that tab is closed.
+- **Picks by value.** While a selector of a dialog waits for a pick, the assembly's faces, straight
+  edges and vertices answer it: a planar face gives its plane (a sketch on it, a mirror plane, a
+  datum plane), a straight edge its direction, a vertex its place. What the part keeps is the
+  plane, the direction or the place itself in the part's frame, not a link: it does not follow the
+  other component when that changes shape or moves. A datum made from an edge asks for its end
+  points instead.
 - Changes made in the part reach the assembly the way any edit of a part in another tab does
   (switching to the assembly's tab, Update parts, Save all).
 
@@ -99,7 +106,7 @@ Costs and limits: each update meshes the part's bodies twice to match faces; a f
 by the file (one that wraps all the way around) is matched to neither half and keeps its place
 name; and a feature of one part still can't refer to another part's faces (the work part's context
 is drawn, not pickable), though each of its faces now has a name that would survive the part
-changing, which a reference across files would need.
+changing, which an associative reference across files would need.
 
 ## What a reference does not do yet
 

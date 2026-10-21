@@ -719,13 +719,10 @@ fn mate(s: &mut Session, p: &Value) -> Result<Value> {
         }
         return s.execute("occurrence.ground", &json!({"occurrence": occ, "grounded": true}));
     }
-    let (kind, flip) = match ty {
-        "touch" | "distance" => ("planar", false),
-        "align" => ("planar", true),
-        "concentric" => ("cylindrical", false),
-        "parallel" | "perpendicular" | "angle" => (ty, false),
-        _ => return Err(bad(cmd, "`type` must be touch, align, concentric, distance, parallel, perpendicular, angle or fix")),
-    };
+    let flip = ty == "align";
+    if !matches!(ty, "touch" | "align" | "distance" | "concentric" | "parallel" | "perpendicular" | "angle") {
+        return Err(bad(cmd, "`type` must be touch, align, concentric, distance, parallel, perpendicular, angle or fix"));
+    }
     if ty == "concentric" && p.get("offset").is_some() {
         return Err(bad(cmd, "a concentric mate has no `offset`"));
     }
@@ -738,13 +735,37 @@ fn mate(s: &mut Session, p: &Value) -> Result<Value> {
     if p.get("angle").is_some() && ty != "angle" {
         return Err(bad(cmd, "only an angle mate takes `angle`"));
     }
-    let mut q = json!({"type": kind, "flip": flip});
-    for k in ["a", "b", "offset", "angle", "name"] {
-        if let Some(v) = p.get(k) {
-            q[k] = v.clone();
+    let make = |s: &mut Session, kind: &str, flip: bool, name: Option<String>, keys: &[&str]| -> Result<Value> {
+        let mut q = json!({"type": kind, "flip": flip});
+        for k in keys {
+            if let Some(v) = p.get(*k) {
+                q[*k] = v.clone();
+            }
         }
+        if let Some(name) = name {
+            q["name"] = json!(name);
+        }
+        joint(s, &q)
+    };
+    // Touch, align, distance and concentric are two relations each (the faces' directions, then
+    // where one sits against the other), so every mate leaves the freedom the others can take
+    // away: mates on one pair of parts stack until nothing is left to move.
+    let named = |what: &str| str_(p, "name").map(|n| format!("{n} ({what})"));
+    match ty {
+        "touch" | "align" | "distance" => {
+            make(s, "parallel", flip, named("direction"), &["a", "b"])?;
+            let mut r = make(s, "point_on_plane", flip, named("position"), &["a", "b", "offset"])?;
+            r["joints"] = json!(s.doc.assembly.joints.iter().rev().take(2).map(|j| j.id).rev().collect::<Vec<_>>());
+            Ok(r)
+        }
+        "concentric" => {
+            make(s, "parallel", false, named("direction"), &["a", "b"])?;
+            let mut r = make(s, "point_on_line", false, named("position"), &["a", "b"])?;
+            r["joints"] = json!(s.doc.assembly.joints.iter().rev().take(2).map(|j| j.id).rev().collect::<Vec<_>>());
+            Ok(r)
+        }
+        _ => make(s, ty, false, str_(p, "name").map(str::to_string), &["a", "b", "offset", "angle"]),
     }
-    joint(s, &q)
 }
 
 fn as_built(s: &mut Session, p: &Value) -> Result<Value> {

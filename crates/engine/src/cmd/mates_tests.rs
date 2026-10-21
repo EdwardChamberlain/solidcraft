@@ -142,3 +142,37 @@ fn hostile_parameters_are_refused() {
         assert!(s.execute("mate.create", &p).is_err(), "{p}");
     }
 }
+
+#[test]
+fn stacked_touches_remove_all_the_freedom() {
+    let mut s = pair();
+    let touch = |s: &mut Session, a: [f64; 3], b: [f64; 3]| {
+        let r = run(s, "mate.create", json!({"type": "touch", "a": {"occurrence": "Base", "face": a}, "b": {"occurrence": "Block", "face": b}}));
+        assert_eq!(r["conflicts"].as_array().map(Vec::len), Some(0), "{r}");
+    };
+    // The block's bottom on the base's top, its left side against the base's right side, its front
+    // against the base's back: three mates, one place.
+    touch(&mut s, [20.0, 20.0, 10.0], [110.0, 110.0, 100.0]);
+    touch(&mut s, [40.0, 20.0, 5.0], [100.0, 110.0, 102.5]);
+    touch(&mut s, [20.0, 40.0, 5.0], [110.0, 100.0, 102.5]);
+    let block = super::tests::occ(&s, "Block");
+    let dof =
+        |r: &serde_json::Value| r["dof"].as_array().and_then(|d| d.iter().find(|d| d["occurrence"] == json!(block))).and_then(|d| d["dof"].as_u64());
+    let r = run(&mut s, "joint.solve", json!({}));
+    assert_eq!((dof(&r), r["conflicts"].as_array().map(Vec::len)), (Some(0), Some(0)), "nothing left to move: {r}");
+    let corner = place(&s, "Block", Vec3::new(100.0, 100.0, 100.0));
+    assert!((corner - Vec3::new(40.0, 40.0, 10.0)).dot(corner - Vec3::new(40.0, 40.0, 10.0)) < 1e-8, "{corner:?}");
+}
+
+#[test]
+fn a_mate_is_two_joints_and_a_name_names_both() {
+    let mut s = pair();
+    let r = run(
+        &mut s,
+        "mate.create",
+        json!({"type": "touch", "name": "Seat", "a": {"occurrence": "Base", "face": [20, 20, 10]}, "b": {"occurrence": "Block", "face": [110, 110, 100]}}),
+    );
+    let names: Vec<_> = s.doc.assembly.joints.iter().map(|j| j.name.as_str()).collect();
+    assert_eq!(names, ["Seat (direction)", "Seat (position)"], "{r}");
+    assert_eq!(r["joints"].as_array().map(Vec::len), Some(2));
+}

@@ -1280,6 +1280,16 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
     // A face place (the Single hole's) snaps only to points their sketches show, so a nearer
     // point that isn't shown (a letter's outline) neither takes the pick nor hides a shown one.
     let snapping = app.dialog.as_ref().and_then(|d| d.active_input()).is_some_and(|i| crate::dialogs::snaps_to_points(i.accept));
+    // The assembly around a work part, for the places a selector names (a face, an edge, a vertex).
+    let context = crate::work_part::pickable(app);
+    let context_bounds: Vec<solidcraft_engine::geom::Aabb3> = context.iter().flat_map(|c| c.iter()).map(|b| b.mesh().bounds()).collect();
+    let bodies: Vec<&solidcraft_engine::doc::ModelBody> = st.bodies.iter().chain(context.iter().flat_map(|c| c.iter())).collect();
+    let bound_of = |i: usize| -> Option<solidcraft_engine::geom::Aabb3> {
+        match bounds.get(i) {
+            Some((_, bb)) => Some(*bb),
+            None => context_bounds.get(i.saturating_sub(st.bodies.len())).copied(),
+        }
+    };
     let mut best = Near::new(all);
     for ss in point_sketches.iter().filter_map(|sid| st.sketch(*sid)) {
         let sid = ss.feature;
@@ -1335,14 +1345,14 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
     let mut faces = Near::new(all);
     // Bounds retain the state's body order. Looking each one up by name made both passes
     // quadratic for assemblies with many small parts.
-    for (i, b) in st.bodies.iter().enumerate() {
+    for (i, b) in bodies.iter().copied().enumerate() {
         if !app.session.body_visible(&b.name) {
             continue;
         }
         // Bodies whose box the ray misses (or enters behind the best hit so far) are skipped.
-        if let Some((_, bb)) = bounds.get(i) {
+        if let Some(bb) = bound_of(i) {
             let pad = bb.diagonal() * 1e-6 + 1e-9;
-            match ray_box(o, d, bb, pad) {
+            match ray_box(o, d, &bb, pad) {
                 None => continue,
                 Some(t0) if !all && bestf.as_ref().is_some_and(|(bt, _)| t0 > *bt) => continue,
                 _ => {}
@@ -1371,13 +1381,13 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
     let seen = if all { None } else { crate::pick_buffer::edges_near(app, proj, pos, &st) };
     let mut bestv = Near::new(all);
     let mut beste = Near::new(all);
-    for (i, b) in st.bodies.iter().enumerate() {
+    for (i, b) in bodies.iter().copied().enumerate() {
         if !app.session.body_visible(&b.name) {
             continue;
         }
         // Only bodies whose outline on screen is near the cursor can have an edge under it.
-        if let Some((_, bb)) = bounds.get(i)
-            && screen_box(proj, bb, 8.0).is_some_and(|r| !r.contains(pos))
+        if let Some(bb) = bound_of(i)
+            && screen_box(proj, &bb, 8.0).is_some_and(|r| !r.contains(pos))
         {
             continue;
         }

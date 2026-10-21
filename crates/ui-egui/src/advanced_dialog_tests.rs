@@ -305,3 +305,80 @@ fn hole_and_blend_dialogs_have_groups_in_advanced_only() {
     assert_eq!(groups_of(ModellingApproach::Advanced, "solid.fillet", &blend), [true, true]);
     assert_eq!(groups_of(ModellingApproach::Classic, "solid.fillet", &blend), [false, false]);
 }
+
+#[test]
+fn specify_point_takes_a_sketch_point_as_the_place() {
+    use solidcraft_engine::Sel;
+    let mut h = Harness::new();
+    h.app.preferences.modelling_approach = ModellingApproach::Advanced;
+    h.app.run("construct.plane.offset", json!({"base":"XY","offset":"30 mm","name":"High"})).unwrap();
+    h.app.run("sketch.create", json!({"plane":"High","name":"Marks"})).unwrap();
+    h.app.run("sketch.point", json!({"point":[4,6]})).unwrap();
+    let sid = h.app.session.active_sketch.unwrap();
+    let id = h.app.session.world_state().sketch(sid).unwrap().sketch.points[0].id.clone();
+    h.app.run("sketch.finish", json!({})).unwrap();
+    sketch(&mut h);
+    h.step(&json!({"call":"ui.start","params":{"command":"solid.extrude"}})).unwrap();
+    h.frames(4);
+    let d = h.app.dialog.as_mut().unwrap();
+    d.inputs.push(crate::selection::SelInput::new("To Object", crate::dialogs_specify::POINT, false));
+    assert_ne!(d.inputs.last().unwrap().accept & crate::selection::SKETCH_POINTS, 0, "the input takes a sketch point");
+    let inputs = vec![{
+        let mut i = crate::selection::SelInput::new("To Object", crate::dialogs_specify::POINT, false);
+        i.items = vec![Sel::SketchPoint { id: format!("{sid}:{id}") }];
+        i
+    }];
+    let at = crate::dialogs::object_point(&h.app, &inputs, "To Object").expect("the sketch point is a place");
+    let z = at.as_array().and_then(|a| a.get(2)).and_then(|v| v.as_f64()).unwrap_or(f64::NAN);
+    assert!((z - 30.0).abs() < 1e-9, "{at}");
+}
+
+#[test]
+fn a_value_field_has_a_menu_with_reset_and_what_the_selection_measures() {
+    use solidcraft_engine::Sel;
+    let mut h = Harness::new();
+    h.app.preferences.modelling_approach = ModellingApproach::Advanced;
+    extruded(&mut h);
+    h.app.start("solid.fillet");
+    h.frames(4);
+    // The field is changed, then reset from its menu.
+    let before = match &h.app.dialog.as_ref().unwrap().kind {
+        crate::dialogs::Kind::Fillet { radius, .. } => radius.clone(),
+        other => panic!("{other:?}"),
+    };
+    if let crate::dialogs::Kind::Fillet { radius, .. } = &mut h.app.dialog.as_mut().unwrap().kind {
+        *radius = "7 mm".into();
+    }
+    h.frames(3);
+    h.step(&json!({"click":{"handle":"dialog:menu:Radius"}})).unwrap();
+    h.frames(3);
+    h.step(&json!({"click":{"handle":"dialog:menu:Reset"}})).unwrap();
+    h.frames(3);
+    match &h.app.dialog.as_ref().unwrap().kind {
+        crate::dialogs::Kind::Fillet { radius, .. } => assert_eq!(*radius, before, "Reset puts back what the dialog opened with"),
+        other => panic!("{other:?}"),
+    }
+    // Two picked points measure a distance, which a click puts in the field.
+    h.app.session.selection = vec![
+        Sel::Vertex { body: "Main".into(), point: solidcraft_engine::geom::Vec3::new(0.0, 0.0, 0.0) },
+        Sel::Vertex { body: "Main".into(), point: solidcraft_engine::geom::Vec3::new(10.0, 0.0, 0.0) },
+    ];
+    h.frames(2);
+    h.step(&json!({"click":{"handle":"dialog:menu:Radius"}})).unwrap();
+    h.frames(4);
+    h.step(&json!({"click":{"handle":"dialog:measure:Distance"}})).unwrap();
+    h.frames(3);
+    match &h.app.dialog.as_ref().unwrap().kind {
+        crate::dialogs::Kind::Fillet { radius, .. } => assert_eq!(radius, "10 mm"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn classic_value_fields_have_no_menu() {
+    let mut h = Harness::new();
+    extruded(&mut h);
+    h.app.start("solid.fillet");
+    h.frames(4);
+    assert!(crate::scenario::handle_at("dialog:menu:Radius").is_none());
+}

@@ -385,6 +385,15 @@ pub fn value_row(ui: &mut Ui, method: usize, value: &mut String) -> bool {
 fn reference(app: &SolveApp, sel: &Sel) -> Result<Value, String> {
     let at = |p: solidcraft_engine::geom::Vec3| json!([p.x, p.y, p.z]);
     Ok(match sel {
+        // The assembly around a work part: a place or a plane by value, in the part's frame.
+        Sel::Face { body, index, .. } if crate::work_part::is_context(body) => {
+            let (origin, normal) = crate::work_part::planar_face(app, body, *index).ok_or("that face is not planar")?;
+            json!({"plane": {"origin": at(origin), "normal": at(normal)}})
+        }
+        Sel::Vertex { body, point } if crate::work_part::is_context(body) => json!({"point": at(*point)}),
+        Sel::Edge { body, .. } if crate::work_part::is_context(body) => {
+            return Err("an edge of the assembly gives a direction, not a reference: pick its end points".into());
+        }
         Sel::Plane { name } => json!({"plane": name}),
         Sel::Axis { name } => json!({"axis": name}),
         Sel::Face { point, .. } => json!({"face": at(*point)}),

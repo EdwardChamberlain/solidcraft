@@ -24,6 +24,7 @@ pub fn accept(app: &SolveApp) -> Accept {
 /// The (point, direction) a pick stands for.
 pub fn vector_of(app: &SolveApp, sel: &Sel) -> Option<(Vec3, Vec3)> {
     match sel {
+        Sel::Face { body, index, .. } if crate::work_part::is_context(body) => crate::work_part::planar_face(app, body, *index),
         Sel::Face { body, index, .. } => crate::dialogs::planar_face(&app.session, body, *index),
         other => crate::dialogs::axis_of(app, other),
     }

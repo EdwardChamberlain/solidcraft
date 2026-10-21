@@ -136,18 +136,26 @@ be replaced this way: their picks name geometry a replacement would not have.
 Touch puts the faces together (outsides meeting), Align makes them face the same way, Distance is
 Touch with a gap, Concentric lines two round faces up on one axis, Parallel, Perpendicular and
 Angle hold the faces parallel, square or at an angle while the part slides freely, and Fix grounds
-the face's component. A mate is a joint underneath (touch, align and distance are planar joints,
-concentric a cylindrical one, the three orientation mates the relation joints that tie only the
-directions they name), so it is listed,
-edited and driven as one, and its faces are kept by their persistent names, which now reach
-through linked parts: the mate follows the face when the part changes shape.
+the face's component. Touch, Align, Distance and Concentric are two relation joints each (the
+faces' directions, then where one sits against the other, named "<name> (direction)" and
+"<name> (position)"), and the others are one, so every mate leaves the freedom the next can take
+away: **mates on one pair of parts stack** until nothing is left to move (three Touch mates on the
+bottom and two sides of a block put it in one place). They are listed, edited and driven as joints,
+and their faces are kept by their persistent names, which reach through linked parts: the mate
+follows the face when the part changes shape.
+
+## Value fields
+
+In this approach's dialogs a value field has a small menu at its right edge. **Reset** puts the
+field back to what it was when the dialog opened. **Measure** (while one or two items are selected
+in the viewport) offers what they measure: a length, diameter, radius, circumference, the distance
+between two items (closest, farthest, centre to centre) or the angle between them; a click puts
+the number in the field. Nothing is linked to the geometry: it is the number at that moment.
 
 ## Not built yet
 
-- Referring to the assembly's geometry from the work part (picking a face of another component, or
-  linking to it): the context is drawn but is not pickable.
+- Following the assembly's geometry from the work part: a face of another component can be picked
+  into a selector, but only by value (see advanced-approach-files.md, "Editing in context"); nothing follows it when it changes.
 - A shared evaluation between a part open in a tab and the same part linked in an assembly.
-- Mates that remove all remaining freedom except by stacking them (each mate is one joint: the part still slides along the face).
 - Mirror Assembly (out of scope, see Assembly Navigator actions).
-- Specify Point (the To Object and From Object places) takes a sketch point.
 - Drawings and direct face editing are out of scope for this approach.

@@ -3,14 +3,16 @@
 //! A part is edited in its own tab, where every pick and command works on the part itself. Made
 //! the work part from the Assembly Navigator, its tab also shows the rest of the assembly around
 //! it, faded, in the part's own frame: the pin the bracket must clear, the lid it carries. That
-//! context is for the eye (it is drawn, never picked, and no feature of the part can refer to
-//! it), and it follows the assembly as it stands in its tab: the part's own bodies are left out,
+//! context is drawn, and picked only for the places a plane, vector or point selector names (a
+//! face gives its plane, a straight edge its direction, a vertex its place, by value: the part
+//! does not follow the other component when that changes), and it follows the assembly as it stands in its tab: the part's own bodies are left out,
 //! since the part is on show. Back in the assembly's tab the part's changes arrive as they do
 //! for any edit of a part in another tab.
 
 use std::sync::Arc;
 
 use solidcraft_engine::doc::{ModelBody, kernel, mat_inverse};
+use solidcraft_engine::geom::Vec3;
 
 use crate::SolveApp;
 
@@ -74,6 +76,46 @@ pub fn context_bodies(app: &SolveApp) -> Option<Arc<Vec<ModelBody>>> {
         *cache = Some(Cached { key, bodies: bodies.clone() });
     }
     Some(bodies)
+}
+
+/// Is this body one of the assembly's, drawn around the work part?
+pub fn is_context(name: &str) -> bool {
+    name.starts_with(CONTEXT_PREFIX)
+}
+
+/// A context body by its (prefixed) name.
+fn context_named(app: &SolveApp, name: &str) -> Option<ModelBody> {
+    context_bodies(app)?.iter().find(|b| b.name == name).cloned()
+}
+
+/// The centre and normal of planar face `face` of a context body.
+pub fn planar_face(app: &SolveApp, body: &str, face: usize) -> Option<(Vec3, Vec3)> {
+    let b = context_named(app, body)?;
+    let tol = (b.body.size() * 1e-3).max(1e-3);
+    let f = b.body.faces(tol).ok()?.into_iter().find(|f| f.index == face)?;
+    Some((f.centroid, f.plane_normal?))
+}
+
+/// A point on a context body's straight edge and its direction.
+pub fn straight_edge(app: &SolveApp, body: &str, index: usize) -> Option<(Vec3, Vec3)> {
+    let b = context_named(app, body)?;
+    let m = b.mesh();
+    let e = m.edges.get(index)?;
+    let (a, z) = (*e.first()?, *e.last()?);
+    let dir = (z - a).normalized()?;
+    let tol = 1e-6 * a.dist(z).max(1.0);
+    e.iter().all(|p| (*p - a).cross(dir).len() < tol).then_some((a, dir))
+}
+
+/// The context bodies a pick may land on now: only while a dialog's active input is one of a
+/// plane, vector or point specifier's, and only for the places they name (never a selection to
+/// edit or delete: the part has none of these).
+pub fn pickable(app: &SolveApp) -> Option<Arc<Vec<ModelBody>>> {
+    let input = app.dialog.as_ref()?.active_input().filter(|i| i.owner > 0)?;
+    if input.accept & (crate::selection::FACES | crate::selection::EDGES | crate::selection::VERTICES) == 0 {
+        return None;
+    }
+    context_bodies(app)
 }
 
 /// What the scene key hashes: changes when the context's bodies do.

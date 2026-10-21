@@ -142,6 +142,13 @@ fn choose_fillet_type(extra: &mut serde_json::Map<String, Value>, index: usize, 
 }
 
 pub(super) fn rows(app: &mut SolveApp, ctx: &egui::Context, d: &mut Dialog, ui: &mut egui::Ui) -> bool {
+    crate::field_menu::arm(app, ctx, d);
+    let enter = body(app, ctx, d, ui);
+    crate::field_menu::disarm(ctx);
+    enter
+}
+
+fn body(app: &mut SolveApp, ctx: &egui::Context, d: &mut Dialog, ui: &mut egui::Ui) -> bool {
     let t = Tokens::get();
     let mut enter = false;
     // The Advanced approach's selector rows and groups, for the dialogs that have them.

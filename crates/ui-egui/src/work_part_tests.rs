@@ -125,3 +125,40 @@ fn editing_the_work_part_reaches_the_assembly_when_it_is_shown_again() {
     assert_eq!(h.app.session.world_state().bodies.len(), 3, "Plate, Boss and Pin, from the part as it is now (unsaved)");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_selector_can_pick_a_face_of_the_assembly_around_the_work_part() {
+    use solidcraft_engine::geom::Vec3;
+    let (mut h, dir) = assembly("pick");
+    let bracket = component(&h, "Bracket");
+    crate::shell::advanced::set_pane(&h.ctx, crate::shell::advanced::Pane::Assembly);
+    h.frames(2);
+    make_work_part(&mut h.app, bracket).unwrap();
+    h.frames(3);
+    // The sketch dialog's plane selector, with the Pin (the assembly, 50 mm along) in view from above.
+    h.app.start("sketch.create");
+    h.frames(3);
+    h.call("ui.view", json!({"view": "top"}));
+    h.app.cam.target = Vec3::new(55.0, 15.0, 20.0);
+    h.app.cam.distance = 150.0;
+    h.frames(4);
+    h.step(&json!({"click": {"world": [55.0, 15.0, 40.0]}})).unwrap();
+    h.frames(3);
+    let d = h.app.dialog.as_ref().expect("the sketch dialog");
+    let picked = d.inputs.iter().flat_map(|i| i.items.iter()).next().cloned();
+    assert!(
+        matches!(&picked, Some(solidcraft_engine::Sel::Face { body, .. }) if body.starts_with(CONTEXT_PREFIX)),
+        "the Pin's top face was picked: {picked:?}"
+    );
+    // It makes the sketch on that plane, by value: 40 mm up, in the part's frame.
+    h.step(&json!({"widget": "OK"})).unwrap();
+    h.frames(4);
+    let sid = h.app.session.active_sketch.expect("a sketch on the picked plane");
+    let origin = h.app.session.world_state().sketch(sid).unwrap().plane.origin;
+    assert!((origin.z - 40.0).abs() < 1e-6, "{origin:?}");
+    // Without a selector waiting for it, the assembly is not pickable.
+    h.app.dialog = None;
+    h.frames(2);
+    assert!(crate::work_part::pickable(&h.app).is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}

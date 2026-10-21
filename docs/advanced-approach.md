@@ -111,8 +111,8 @@ component, a direction or an axis, quantity and spacing or total angle; `occurre
 instances of the same component, linear or round an axis) and **Replace With** (`component.replace`:
 another component takes its place, keeping position, fixed state and joints; a joint on a face the
 new component lacks reports it lost it). A pattern works on components placed directly in the
-design. **Mirror Assembly** is not built: a mirrored instance is an improper transform, so a mirror
-needs an opposite-handed copy of the part.
+design. **Mirror Assembly** is out of scope for this approach: a mirrored instance is an improper
+transform, so a mirror needs an opposite-handed copy of the part.
 
 ## Editing a feature whose plane is made in the dialog
 
@@ -137,7 +137,8 @@ Touch puts the faces together (outsides meeting), Align makes them face the same
 Touch with a gap, Concentric lines two round faces up on one axis, Parallel, Perpendicular and
 Angle hold the faces parallel, square or at an angle while the part slides freely, and Fix grounds
 the face's component. A mate is a joint underneath (touch, align and distance are planar joints,
-concentric a cylindrical one, the three orientation mates a `parallel` joint with a `tilt`), so it is listed,
+concentric a cylindrical one, the three orientation mates the relation joints that tie only the
+directions they name), so it is listed,
 edited and driven as one, and its faces are kept by their persistent names, which now reach
 through linked parts: the mate follows the face when the part changes shape.
 
@@ -147,5 +148,6 @@ through linked parts: the mate follows the face when the part changes shape.
   linking to it): the context is drawn but is not pickable.
 - A shared evaluation between a part open in a tab and the same part linked in an assembly.
 - Mates that remove all remaining freedom except by stacking them (each mate is one joint: the part still slides along the face).
+- Mirror Assembly (out of scope, see Assembly Navigator actions).
 - Specify Point (the To Object and From Object places) takes a sketch point.
 - Drawings and direct face editing are out of scope for this approach.

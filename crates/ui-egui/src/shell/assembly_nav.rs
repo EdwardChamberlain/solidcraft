@@ -86,13 +86,13 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             ui.label(RichText::new(app.tr("ui.assembly_nav_heading")).size(Tokens::get().font_small).strong().color(t.text_dim));
             ui.horizontal_wrapped(|ui| {
-                if ui.button(app.tr("ui.add_component")).clicked() {
+                if crate::ui_kit::button(ui, app.tr("ui.add_component"), crate::ui_kit::Button::Normal).clicked() {
                     app.start("component.insert_design");
                 }
-                if ui.button(app.tr("ui.new_component")).clicked() {
+                if crate::ui_kit::button(ui, app.tr("ui.new_component"), crate::ui_kit::Button::Normal).clicked() {
                     app.start("component.new_part");
                 }
-                let update = ui.add_enabled(!app.session.doc.links.is_empty(), egui::Button::new(app.tr("ui.update_parts")));
+                let update = crate::ui_kit::button(ui, app.tr("ui.update_parts"), crate::ui_kit::Button::Enabled(!app.session.doc.links.is_empty()));
                 crate::scenario::publish_rect("assembly_nav:update", update.rect);
                 if update.clicked() {
                     match crate::documents::with_open(app, |app| app.run("component.update_links", json!({}))) {
@@ -103,7 +103,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                         Err(e) => app.set_status(e, true),
                     }
                 }
-                let save = ui.button(app.tr("ui.save_all"));
+                let save = crate::ui_kit::button(ui, app.tr("ui.save_all"), crate::ui_kit::Button::Normal);
                 crate::scenario::publish_rect("assembly_nav:save_all", save.rect);
                 if save.clicked() {
                     let r = crate::documents::save_all(app);
@@ -163,11 +163,11 @@ fn one_row(app: &mut SolveApp, ui: &mut egui::Ui, row: &Row) {
         }
         let mut open = false;
         if row.file.is_some() && row.found {
-            let button = ui.small_button(app.tr("ui.open_part"));
+            let button = crate::ui_kit::button(ui, app.tr("ui.open_part"), crate::ui_kit::Button::Small);
             crate::scenario::publish_rect(&format!("assembly_nav:open:{}", row.name), button.rect);
             open |= button.clicked();
             // The same part, with the rest of the assembly around it.
-            let work = ui.small_button(app.tr("ui.make_work_part"));
+            let work = crate::ui_kit::button(ui, app.tr("ui.make_work_part"), crate::ui_kit::Button::Small);
             crate::scenario::publish_rect(&format!("assembly_nav:work:{}", row.name), work.rect);
             if work.clicked() {
                 work_part_of(app, row.component);
@@ -175,19 +175,19 @@ fn one_row(app: &mut SolveApp, ui: &mut egui::Ui, row: &Row) {
         }
         // The same and the rest, on a right click.
         label.context_menu(|ui| {
-            if row.file.is_some() && row.found && ui.button(app.tr("ui.make_work_part")).clicked() {
+            if row.file.is_some() && row.found && crate::ui_kit::button(ui, app.tr("ui.make_work_part"), crate::ui_kit::Button::Normal).clicked() {
                 work_part_of(app, row.component);
                 ui.close();
             }
             if let Some(file) = &row.file
                 && row.found
-                && ui.button(app.tr("ui.open_part_displayed")).clicked()
+                && crate::ui_kit::button(ui, app.tr("ui.open_part_displayed"), crate::ui_kit::Button::Normal).clicked()
             {
                 app.open_path(file);
                 ui.close();
             }
             let (show_hide, to_visible) = if row.hidden { ("ui.show_component", true) } else { ("ui.hide_component", false) };
-            if !row.placements.is_empty() && ui.button(app.tr(show_hide)).clicked() {
+            if !row.placements.is_empty() && crate::ui_kit::button(ui, app.tr(show_hide), crate::ui_kit::Button::Normal).clicked() {
                 let paths: Vec<Vec<u64>> = row.placements.iter().map(|id| vec![*id]).collect();
                 if let Err(e) = app.run("browser.visibility", json!({"visible": to_visible, "paths": paths})) {
                     app.set_status(e, true);
@@ -195,7 +195,7 @@ fn one_row(app: &mut SolveApp, ui: &mut egui::Ui, row: &Row) {
                 ui.close();
             }
             let fix = if row.grounded { "ui.free_component" } else { "ui.fix_component" };
-            if !row.placements.is_empty() && ui.button(app.tr(fix)).clicked() {
+            if !row.placements.is_empty() && crate::ui_kit::button(ui, app.tr(fix), crate::ui_kit::Button::Normal).clicked() {
                 for id in &row.placements {
                     if let Err(e) = app.run("occurrence.ground", json!({"occurrence": id, "grounded": !row.grounded})) {
                         app.set_status(e, true);
@@ -205,7 +205,7 @@ fn one_row(app: &mut SolveApp, ui: &mut egui::Ui, row: &Row) {
                 ui.close();
             }
             if let Some(first) = row.placements.first().copied() {
-                if ui.button("Pattern Component…").clicked() {
+                if crate::ui_kit::button(ui, "Pattern Component…", crate::ui_kit::Button::Normal).clicked() {
                     app.start("occurrence.pattern");
                     // The component is picked: its first body stands for it.
                     let body = app.session.occurrence_bodies(&[first], true).ok().and_then(|b| b.into_iter().next());
@@ -239,7 +239,7 @@ fn one_row(app: &mut SolveApp, ui: &mut egui::Ui, row: &Row) {
                 if !others.is_empty() {
                     let r = ui.menu_button("Replace With", |ui| {
                         for (id, name) in &others {
-                            let r = ui.button(name);
+                            let r = crate::ui_kit::button(ui, name, crate::ui_kit::Button::Normal);
                             crate::scenario::publish_handle(&format!("assembly_nav:replace:{name}"), r.rect.center());
                             if r.clicked() {
                                 if let Err(e) = app.run("component.replace", json!({"component": row.component, "with": id})) {
@@ -252,7 +252,7 @@ fn one_row(app: &mut SolveApp, ui: &mut egui::Ui, row: &Row) {
                     crate::scenario::publish_handle(&format!("assembly_nav:replace:{}", row.name), r.response.rect.center());
                 }
             }
-            if row.path.is_some() && ui.button(app.tr("ui.break_link")).clicked() {
+            if row.path.is_some() && crate::ui_kit::button(ui, app.tr("ui.break_link"), crate::ui_kit::Button::Normal).clicked() {
                 if let Err(e) = app.run("component.break_link", json!({"component": row.component})) {
                     app.set_status(e, true);
                 }

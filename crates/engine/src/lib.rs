@@ -171,9 +171,21 @@ pub struct Snapshot {
 pub struct Ahead(Session);
 
 impl Ahead {
-    /// Run `commands` (their results stay in the shared evaluation cache).
-    pub fn evaluate(self, commands: &[(String, Value)]) -> Result<()> {
-        self.0.preview_in_place(commands).map(|_| ())
+    /// What the evaluation computes, kept for the run that follows here whatever the evaluation
+    /// cache drops meanwhile: hand it to [`solidcraft_doc::Model::keep`] for that run.
+    pub fn kept(&self) -> Arc<solidcraft_doc::KeptResults> {
+        self.0.model.kept().unwrap_or_default()
+    }
+
+    /// Run `commands` (their results stay in the shared evaluation cache, and in [`Ahead::kept`]),
+    /// then make the display meshes and plans of the bodies they end with, so the window draws,
+    /// fits and picks without tessellating anything. What they evaluated comes back for
+    /// [`Session::prime`], so running them for real evaluates nothing again: the shared cache
+    /// drops results past its budget, and a large design's states are past it.
+    pub fn evaluate(self, commands: &[(String, Value)]) -> Result<Evaluated> {
+        let (after, _) = self.0.preview_in_place(commands)?;
+        after.world_state().warm_display();
+        Ok(Evaluated(after.model))
     }
 
     /// Run `commands` one after another, each reply or error in turn (what they evaluate stays
@@ -183,6 +195,10 @@ impl Ahead {
         commands.iter().map(|(id, params)| self.0.execute(id, params)).collect()
     }
 }
+
+/// The model a session copy evaluated ahead ([`Ahead::evaluate`]).
+#[derive(Clone, Debug)]
+pub struct Evaluated(solidcraft_doc::Model);
 
 /// What some commands would make, evaluated on a scratch copy of a session
 /// ([`Session::preview`]). The session itself is not changed.
@@ -258,6 +274,9 @@ pub struct Session {
     /// Recent body renames: the design before and after each, and the names, so undo and redo
     /// follow them without evaluating either.
     body_renames: Vec<BodyRename>,
+    /// Bodies' contact meshes (shared with scratch copies): a joint driven again meshes no body
+    /// that did not change.
+    contact_meshes: std::sync::Arc<std::sync::Mutex<cmd::motion::contact_sweep::ContactMeshes>>,
     /// Features copied with `timeline.copy` (pasted by `timeline.paste`).
     pub clipboard: Vec<solidcraft_doc::Feature>,
     /// Sketch geometry copied with `sketch.copy` (pasted by `sketch.paste`).
@@ -412,6 +431,7 @@ impl Session {
             removed_later_cache: Default::default(),
             clearance_cache: Default::default(),
             body_renames: Vec::new(),
+            contact_meshes: Default::default(),
             clipboard: Vec::new(),
             sketch_clipboard: None,
             section: None,
@@ -432,16 +452,24 @@ impl Session {
 
     /// Become `fresh` (another design opened, recovered or started), keeping the settings that
     /// are the user's rather than the design's: `auto_project` is a preference (#680).
+    /// Checkpoints survive too: a batch that failed after `file.new` or `doc.open` goes back
+    /// from the checkpoint it took before its first step, and that checkpoint belongs to the
+    /// design before the batch, which is what the batch promised (#3242). The design is what a
+    /// checkpoint keeps, not the replaced session's file path (docs/mcp.md).
     pub fn replace_design(&mut self, fresh: Session) {
         let auto_project = self.auto_project;
         let param_check = self.param_check;
         let render_viewport = self.render_viewport.clone();
         let render_jobs = self.render_jobs.scratch();
+        let checkpoints = std::mem::take(&mut self.checkpoints);
+        let next_checkpoint = self.next_checkpoint;
         *self = fresh;
         self.auto_project = auto_project;
         self.param_check = param_check;
         self.render_viewport = render_viewport;
         self.render_jobs = render_jobs;
+        self.checkpoints = checkpoints;
+        self.next_checkpoint = next_checkpoint;
     }
 
     /// The design has changes not in its file: in the document, or in what is hidden.
@@ -936,6 +964,7 @@ impl Session {
             removed_later_cache: Default::default(),
             clearance_cache: self.clearance_cache.clone(),
             body_renames: Vec::new(),
+            contact_meshes: self.contact_meshes.clone(),
             clipboard: self.clipboard.clone(),
             sketch_clipboard: self.sketch_clipboard.clone(),
             section: None,
@@ -959,6 +988,19 @@ impl Session {
     pub fn invalidate_view(&mut self, previous_revision: u64) {
         let old = self.revision;
         self.revision = old.max(previous_revision) + 1;
+    }
+
+    /// Offer what a copy of this session evaluated ahead for the commands about to run
+    /// ([`Ahead::evaluate`]): until [`Session::unprime`], evaluating takes each feature result
+    /// whose inputs match instead of computing it again (a design changed meanwhile matches
+    /// less, or nothing, and is evaluated as usual).
+    pub fn prime(&mut self, evaluated: &Evaluated) {
+        self.model.prime(&evaluated.0);
+    }
+
+    /// Stop offering what [`Session::prime`] offered.
+    pub fn unprime(&mut self) {
+        self.model.unprime();
     }
 
     /// Commit commands evaluated on a scratch copy without losing this session's file,
@@ -1023,6 +1065,7 @@ impl Session {
         let mut copy = self.scratch();
         copy.undo.clone_from(&self.undo);
         copy.redo.clone_from(&self.redo);
+        copy.model.keep(Some(Arc::default()));
         Ahead(copy)
     }
 

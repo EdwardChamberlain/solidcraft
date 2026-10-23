@@ -882,6 +882,6 @@ fn icon_square(ui: &mut Ui, icon: &str, selected: bool) -> egui::Response {
     } else if r.hovered() {
         ui.painter().rect_filled(rect, t.control_radius, t.hover);
     }
-    crate::icons::paint(ui.painter(), rect.shrink(4.0), icon, t.icon, t.icon_fill, t.accent);
+    crate::icons::paint_icon(ui.painter(), rect.shrink(4.0), icon, 1.0);
     r
 }

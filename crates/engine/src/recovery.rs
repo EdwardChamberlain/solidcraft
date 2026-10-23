@@ -1,10 +1,8 @@
 //! Autosave and crash recovery.
 //!
-//! A running app keeps recovery entries in the recovery folder, one for each open design that
-//! has unsaved changes: `<id>.solidcraft` (the design as of the last autosave), `<id>.json` (its
-//! file path, name and time) and `<id>.lock`, which the app holds locked while it runs. The
-//! first open design's entry is the app's own `<id>`; the others are `<id>-s<n>` and name the
-//! app in `owner`, so one lock covers them all. Autosaves are written atomically, only when the design
+//! Each open design keeps its own recovery entry in the recovery folder: `<id>.solidcraft` (the design
+//! as of the last autosave), `<id>.json` (its file path, name and time) and `<id>.lock`, which
+//! the app holds locked while it runs. Autosaves are written atomically, only when the design
 //! has unsaved changes it hasn't written yet; a design with nothing unsaved has no entry. An
 //! entry whose lock nobody holds belongs to an app that crashed (or closed with unsaved changes):
 //! the next launch offers to recover it.
@@ -74,7 +72,7 @@ fn dirs_under(root: &Path, title_case: bool) -> (PathBuf, PathBuf) {
 }
 
 /// What an entry's `<id>.json` holds.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Entry {
     pub id: String,
     /// The design's file, if it had one.
@@ -83,9 +81,6 @@ pub struct Entry {
     /// When it was autosaved (seconds since 1970).
     pub saved_at: u64,
     pub features: usize,
-    /// The app whose lock holds this entry, when it is not the app's own first entry.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub owner: Option<String>,
 }
 
 fn unix_now() -> u64 {
@@ -124,8 +119,7 @@ pub fn orphans(dir: &Path) -> Vec<Entry> {
                 return None;
             }
             // Held by a running app: not an orphan.
-            let owner = entry.owner.as_deref().filter(|o| valid_id(o)).unwrap_or(&entry.id);
-            let lock = File::open(file(dir, owner, "lock"));
+            let lock = File::open(file(dir, &entry.id, "lock"));
             if let Ok(l) = &lock
                 && l.try_lock().is_err()
             {
@@ -169,7 +163,7 @@ pub fn remove(dir: &Path, id: &str) -> Result<()> {
     Ok(())
 }
 
-/// One app's autosaver.
+/// One open design's autosaver. Keep it with that design when switching tabs.
 pub struct Autosaver {
     pub dir: PathBuf,
     pub id: String,
@@ -180,21 +174,10 @@ pub struct Autosaver {
     last: Option<(Arc<Document>, crate::Visibility)>,
     last_at: Instant,
     has_entry: bool,
-    /// What each other open design (by tab, from the second on) had at its last autosave.
-    slots: std::collections::BTreeMap<usize, Slot>,
-    /// Does the design being autosaved start the crash replays (it is the one the window shows)?
-    rebase: bool,
     /// The autosave being written on a worker thread: the design and what was hidden as it
     /// started, and the outcome once the thread ends. A large design takes long enough to write
     /// (and longer with its evaluated model) that the window must not wait for it.
     writing: Option<Writing>,
-}
-
-/// One of the other open designs' autosave state.
-#[derive(Default)]
-struct Slot {
-    last: Option<(Arc<Document>, crate::Visibility)>,
-    has_entry: bool,
 }
 
 /// An autosaver going away with a write still running (the app quit without closing it) lets the
@@ -221,8 +204,6 @@ struct Snapshot {
     doc: Arc<Document>,
     visibility: crate::Visibility,
     path: Option<String>,
-    /// The app whose lock holds the entry, when it is not the app's own first one.
-    owner: Option<String>,
 }
 
 impl Snapshot {
@@ -243,7 +224,6 @@ impl Snapshot {
             name: self.doc.name.clone(),
             saved_at: unix_now(),
             features: self.doc.features.len(),
-            owner: self.owner.clone(),
         };
         let meta = serde_json::to_vec_pretty(&entry).map_err(|e| EngineError::Other(e.to_string()))?;
         solidcraft_io::write_atomic(&file(&self.dir, &self.id, "json"), &meta, false).map_err(io)?;
@@ -252,7 +232,7 @@ impl Snapshot {
 }
 
 impl Autosaver {
-    /// Start autosaving into `dir` (created if needed), holding this app's lock.
+    /// Start autosaving into `dir` (created if needed), holding this design's lock.
     pub fn new(dir: &Path, interval: Duration) -> Result<Autosaver> {
         let io = |e: std::io::Error| EngineError::Other(format!("{}: {e}", dir.display()));
         fs::create_dir_all(dir).map_err(io)?;
@@ -273,18 +253,7 @@ impl Autosaver {
         let id = format!("{}-{}-{seq}", unix_now(), std::process::id());
         let lock = OpenOptions::new().create(true).truncate(false).write(true).open(file(dir, &id, "lock")).map_err(io)?;
         lock.lock().map_err(io)?;
-        Ok(Autosaver {
-            dir: dir.to_path_buf(),
-            id,
-            interval,
-            lock: Some(lock),
-            last: None,
-            last_at: Instant::now(),
-            has_entry: false,
-            slots: Default::default(),
-            rebase: true,
-            writing: None,
-        })
+        Ok(Autosaver { dir: dir.to_path_buf(), id, interval, lock: Some(lock), last: None, last_at: Instant::now(), has_entry: false, writing: None })
     }
 
     /// Autosave now if the design has unsaved changes not written yet (and drop the entry when
@@ -322,7 +291,7 @@ impl Autosaver {
                 }
                 // No thread to write on: write here, as before.
                 Err(_) => {
-                    let snapshot = Snapshot { dir: self.dir.clone(), id: self.id.clone(), doc, visibility, path: s.path.clone(), owner: None };
+                    let snapshot = Snapshot { dir: self.dir.clone(), id: self.id.clone(), doc, visibility, path: s.path.clone() };
                     let written = snapshot.write();
                     self.written(s, snapshot.doc, snapshot.visibility, written)?;
                     Ok(true)
@@ -350,22 +319,13 @@ impl Autosaver {
             }
             self.last = None;
             // Crash replays start from the saved file (or a new design) from here.
-            if self.rebase {
-                crate::crash::rebased(s, s.path.as_deref().map(Path::new), false);
-            }
+            crate::crash::rebased(s, s.path.as_deref().map(Path::new), false);
             return None;
         }
         if self.last.as_ref().is_some_and(|(l, v)| (Arc::ptr_eq(l, &s.doc) || **l == *s.doc) && *v == s.visibility) {
             return None;
         }
-        Some(Snapshot {
-            dir: self.dir.clone(),
-            id: self.id.clone(),
-            doc: s.doc.clone(),
-            visibility: s.visibility.clone(),
-            path: s.path.clone(),
-            owner: None,
-        })
+        Some(Snapshot { dir: self.dir.clone(), id: self.id.clone(), doc: s.doc.clone(), visibility: s.visibility.clone(), path: s.path.clone() })
     }
 
     /// The running write's outcome, once it has one (`wait`: wait for it). True when no write
@@ -394,134 +354,32 @@ impl Autosaver {
         self.has_entry = true;
         // Crash replays start from this autosave from here, unless the design changed while it
         // was written: the journal then keeps the commands since its older start.
-        if self.rebase && Arc::ptr_eq(&s.doc, &doc) {
+        if Arc::ptr_eq(&s.doc, &doc) {
             crate::crash::rebased(s, Some(&file(&self.dir, &self.id, solidcraft_io::DESIGN_EXT)), true);
         }
         self.last = Some((doc, visibility));
         Ok(())
     }
 
+    /// The user closed this design (saving it or choosing Don't Save): discard only its entry.
+    pub fn discard(mut self) {
+        // A write still running would recreate the entry, without a lock, after it is removed:
+        // the next launch would offer a design the user closed.
+        if let Some(w) = self.writing.take() {
+            let _ = w.done.recv();
+        }
+        for ext in ["json", solidcraft_io::DESIGN_EXT] {
+            let _ = fs::remove_file(file(&self.dir, &self.id, ext));
+        }
+        self.lock = None;
+        let _ = fs::remove_file(file(&self.dir, &self.id, "lock"));
+    }
+
     /// Closing the app: with nothing unsaved the entry goes; otherwise it stays for the next
     /// launch to offer. The lock is released either way.
     pub fn close(mut self, s: &Session) {
         let _ = self.save(s);
-        self.release();
-    }
-
-    /// The id of the entry for open design number `slot` (the first is the app's own).
-    fn entry_id(&self, slot: usize) -> String {
-        if slot == 0 { self.id.clone() } else { format!("{}-s{slot}", self.id) }
-    }
-
-    /// Autosave open design number `slot` (the tab's position) now, as [`Autosaver::save`] does
-    /// for the first. `active` is the design the window shows, whose crash replay starts from here.
-    pub fn save_slot(&mut self, slot: usize, s: &Session, active: bool) -> Result<bool> {
-        if slot == 0 {
-            self.rebase = active;
-            let r = self.save(s);
-            self.rebase = true;
-            return r;
-        }
-        let id = self.entry_id(slot);
-        let state = self.slots.entry(slot).or_default();
-        if !s.is_dirty() {
-            if state.has_entry {
-                for ext in ["json", "solidcraft"] {
-                    let _ = fs::remove_file(file(&self.dir, &id, ext));
-                }
-                state.has_entry = false;
-            }
-            state.last = None;
-            if active {
-                crate::crash::rebased(s, s.path.as_deref().map(Path::new), false);
-            }
-            return Ok(false);
-        }
-        if state.last.as_ref().is_some_and(|(l, v)| (Arc::ptr_eq(l, &s.doc) || **l == *s.doc) && *v == s.visibility) {
-            return Ok(false);
-        }
-        let snapshot = Snapshot {
-            dir: self.dir.clone(),
-            id: id.clone(),
-            doc: s.doc.clone(),
-            visibility: s.visibility.clone(),
-            path: s.path.clone(),
-            owner: Some(self.id.clone()),
-        };
-        snapshot.write()?;
-        state.last = Some((snapshot.doc, snapshot.visibility));
-        state.has_entry = true;
-        if active {
-            crate::crash::rebased(s, Some(&file(&self.dir, &id, solidcraft_io::DESIGN_EXT)), true);
-        }
-        Ok(true)
-    }
-
-    /// Autosave every open design, in tab order (`active`: which one the window shows), dropping
-    /// the entries of tabs that have gone. Returns how many it wrote.
-    pub fn save_all(&mut self, sessions: &[&Session], active: usize) -> Result<usize> {
-        self.last_at = Instant::now();
-        let mut wrote = 0;
-        let mut first_error = None;
-        for (slot, s) in sessions.iter().enumerate() {
-            match self.save_slot(slot, s, slot == active) {
-                Ok(true) => wrote += 1,
-                Ok(false) => {}
-                Err(e) => first_error = first_error.or(Some(e)),
-            }
-        }
-        let gone: Vec<usize> = self.slots.keys().copied().filter(|k| *k >= sessions.len()).collect();
-        for slot in gone {
-            self.forget_slot(slot);
-        }
-        match first_error {
-            Some(e) => Err(e),
-            None => Ok(wrote),
-        }
-    }
-
-    /// A tab was closed: its entry goes.
-    fn forget_slot(&mut self, slot: usize) {
-        let id = self.entry_id(slot);
-        if self.slots.remove(&slot).is_some_and(|s| s.has_entry) {
-            for ext in ["json", "solidcraft"] {
-                let _ = fs::remove_file(file(&self.dir, &id, ext));
-            }
-        }
-    }
-
-    /// Autosave every open design when the interval has passed, or right away after a big
-    /// operation: the first on a worker thread as [`Autosaver::tick`] does, the others here.
-    /// Returns how many writes it started or made.
-    pub fn tick_all(&mut self, sessions: &[&Session], active: usize, big: bool) -> Result<usize> {
-        let Some(first) = sessions.first() else { return Ok(0) };
-        let due = big || self.last_at.elapsed() >= self.interval;
-        self.rebase = active == 0;
-        let started = self.tick(first, big);
-        self.rebase = true;
-        let mut wrote = usize::from(started?);
-        if due {
-            for (slot, s) in sessions.iter().enumerate().skip(1) {
-                if self.save_slot(slot, s, slot == active)? {
-                    wrote += 1;
-                }
-            }
-            let gone: Vec<usize> = self.slots.keys().copied().filter(|k| *k >= sessions.len()).collect();
-            for slot in gone {
-                self.forget_slot(slot);
-            }
-        }
-        Ok(wrote)
-    }
-
-    /// Closing the app with several designs open: what is unsaved stays for the next launch.
-    pub fn close_all(mut self, sessions: &[&Session], active: usize) {
-        let _ = self.save_all(sessions, active);
-        self.release();
-    }
-
-    fn release(&mut self) {
-        if !self.has_entry && !self.slots.values().any(|s| s.has_entry) {
+        if !self.has_entry {
             let _ = fs::remove_file(file(&self.dir, &self.id, "lock"));
         }
         self.lock = None;
@@ -538,8 +396,7 @@ mod tests {
         let id = "1-2-3";
         let doc = Document::default();
         fs::write(d.join(format!("{id}.solvecraft")), solidcraft_io::write_design(&doc)).unwrap();
-        let entry =
-            Entry { id: id.into(), path: Some("/d/part.solvecraft".into()), name: "part".into(), saved_at: 1, features: 0, ..Default::default() };
+        let entry = Entry { id: id.into(), path: Some("/d/part.solvecraft".into()), name: "part".into(), saved_at: 1, features: 0 };
         fs::write(d.join(format!("{id}.json")), serde_json::to_vec(&entry).unwrap()).unwrap();
         assert_eq!(orphans(&d).iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), [id]);
         let (_, loaded) = load(&d, id).unwrap();
@@ -648,7 +505,7 @@ mod tests {
         let discard = |s: &mut Session, id: &str| s.execute("doc.recovery_discard", &json!({"dir": d.to_string_lossy(), "id": id}));
         let e = discard(&mut s, "part").unwrap_err();
         assert!(e.to_string().contains("no recovered design `part`"), "{e}");
-        let other = Entry { id: "other".into(), path: None, name: "x".into(), saved_at: 1, features: 0, owner: None };
+        let other = Entry { id: "other".into(), path: None, name: "x".into(), saved_at: 1, features: 0 };
         fs::write(d.join("part.json"), serde_json::to_vec(&other).unwrap()).unwrap();
         assert!(discard(&mut s, "part").is_err());
         assert!(discard(&mut s, "../part").is_err());
@@ -680,80 +537,6 @@ mod tests {
         fs::write(&part, solidcraft_io::write_design(&Document::default())).unwrap();
         assert!(t.execute("doc.recover", &json!({"dir": d.to_string_lossy(), "id": "part", "discard": true})).is_err());
         assert!(part.exists());
-        let _ = fs::remove_dir_all(&d);
-    }
-
-    fn boxed(name: &str) -> Session {
-        let mut s = Session::default();
-        s.execute("solid.box", &json!({"length": 10, "width": 10, "height": 10, "name": name})).unwrap();
-        s
-    }
-
-    #[test]
-    fn every_open_design_with_unsaved_changes_is_autosaved_and_recovered_after_a_crash() {
-        let d = dir("tabs");
-        let (mut a0, mut a1, untouched) = (boxed("First"), boxed("Second"), Session::default());
-        a0.doc_mut().name = "Plate".into();
-        a1.doc_mut().name = "Lid".into();
-        let mut saver = Autosaver::new(&d, Duration::from_secs(3600)).unwrap();
-        // Three tabs, the middle one the window's; the untouched one has nothing to keep.
-        assert_eq!(saver.save_all(&[&a0, &a1, &untouched], 1).unwrap(), 2);
-        assert_eq!(saver.save_all(&[&a0, &a1, &untouched], 1).unwrap(), 0, "unchanged since");
-        // While the app runs, none of its entries is an orphan.
-        assert!(orphans(&d).is_empty());
-        // Closing the second tab drops its entry.
-        assert_eq!(saver.save_all(&[&a0], 0).unwrap(), 0);
-        assert_eq!(fs::read_dir(&d).unwrap().flatten().filter(|e| e.path().extension().is_some_and(|x| x == "json")).count(), 1);
-        assert_eq!(saver.save_all(&[&a0, &a1], 0).unwrap(), 1, "a design on that tab again is written again");
-        // The app dies: both designs are offered, each loadable.
-        drop(saver);
-        let found = orphans(&d);
-        let mut names: Vec<_> = found.iter().map(|e| e.name.as_str()).collect();
-        names.sort_unstable();
-        assert_eq!(names, ["Lid", "Plate"], "{found:?}");
-        for e in &found {
-            let (doc, entry) = load(&d, &e.id).unwrap();
-            assert_eq!((doc.features.len(), entry.features), (1, 1));
-        }
-        let _ = fs::remove_dir_all(&d);
-    }
-
-    #[test]
-    fn saving_a_tab_drops_its_entry_and_a_clean_close_of_every_tab_leaves_nothing() {
-        let d = dir("tabs-clean");
-        let (mut a0, a1) = (boxed("One"), boxed("Two"));
-        let mut saver = Autosaver::new(&d, Duration::ZERO).unwrap();
-        assert_eq!(saver.save_all(&[&a0, &a1], 0).unwrap(), 2);
-        a0.mark_saved();
-        assert_eq!(saver.save_all(&[&a0, &a1], 0).unwrap(), 0);
-        assert_eq!(fs::read_dir(&d).unwrap().flatten().filter(|e| e.path().extension().is_some_and(|x| x == "json")).count(), 1);
-        let mut a1 = a1;
-        a1.mark_saved();
-        saver.close_all(&[&a0, &a1], 0);
-        assert_eq!(fs::read_dir(&d).unwrap().count(), 0, "nothing left behind");
-        // Closing with one tab unsaved keeps just that one for the next launch.
-        let (kept, clean) = (boxed("Kept"), Session::default());
-        Autosaver::new(&d, Duration::ZERO).unwrap().close_all(&[&clean, &kept], 0);
-        let found = orphans(&d);
-        assert_eq!(found.len(), 1);
-        assert_eq!(load(&d, &found[0].id).unwrap().1.features, 1);
-        let _ = fs::remove_dir_all(&d);
-    }
-
-    #[test]
-    fn tick_all_writes_the_first_design_on_a_worker_and_the_others_at_once() {
-        let d = dir("tick-all");
-        let (a0, a1) = (boxed("One"), boxed("Two"));
-        let mut saver = Autosaver::new(&d, Duration::ZERO).unwrap();
-        assert_eq!(saver.tick_all(&[&a0, &a1], 1, false).unwrap(), 2, "a write started, and the other design's was made");
-        while saver.writing.is_some() {
-            saver.tick_all(&[&a0, &a1], 1, false).unwrap();
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        drop(saver);
-        let mut names: Vec<_> = orphans(&d).iter().map(|e| e.name.clone()).collect();
-        names.sort_unstable();
-        assert_eq!(names.len(), 2, "{names:?}");
         let _ = fs::remove_dir_all(&d);
     }
 

@@ -23,7 +23,7 @@ mod web {
 
     use solidcraft_engine::Session;
     use solidcraft_engine::io::vfs;
-    use solidcraft_ui_egui::{Services, SolveApp};
+    use solidcraft_ui_egui::{Services, SolveApp, ui_kit};
     use wasm_bindgen::JsCast as _;
 
     use crate::api::Api;
@@ -136,6 +136,11 @@ mod web {
                 self.app.open_path(&path);
                 self.files.panel.set(false);
             }
+            // Recent designs whose file is gone are dropped from the list.
+            for path in self.files.gone.borrow_mut().drain(..) {
+                self.app.home.recent.retain(|r| *r != path);
+                self.app.home.opened_at.remove(&path);
+            }
             for (text, error) in self.files.messages.borrow_mut().drain(..) {
                 self.app.set_status(text, error);
             }
@@ -203,7 +208,9 @@ mod web {
             let mut entries = self.files.entries.borrow().clone();
             entries.sort_by(|a, b| b.modified.total_cmp(&a.modified));
             let recent = &mut self.app.home.recent;
-            recent.retain(|p| vfs::exists(p));
+            let known = self.files.disk_known.borrow().clone();
+            // A design on the computer's disk stays listed while its file is remembered.
+            recent.retain(|p| vfs::exists(p) || disk::parse(p).is_some_and(|(id, _)| known.contains(id)));
             for e in entries.iter().filter(|e| solidcraft_engine::io::is_design_path(&e.name)) {
                 let p = format!("{}{}", files::OPFS, e.name);
                 if !recent.contains(&p) {
@@ -211,6 +218,10 @@ mod web {
                 }
             }
             recent.truncate(solidcraft_ui_egui::home::MAX_RECENT);
+            // Remembered files that no recent design or autosave names are forgotten in time.
+            let recovered = self.files.recovery.borrow().as_ref().and_then(|(_, p)| p.clone());
+            let keep = recent.iter().chain(recovered.as_ref()).filter_map(|p| disk::parse(p)).map(|(id, _)| id.to_string()).collect();
+            disk::prune(keep);
         }
 
         /// The stored designs: open, insert, rename, delete, download; open from the computer.
@@ -218,24 +229,21 @@ mod web {
             if !self.files.panel.get() {
                 return;
             }
-            let mut open = true;
             let mut act: Option<(&'static str, String)> = None;
-            egui::Window::new("Files in this browser")
-                .open(&mut open)
-                .collapsible(false)
-                .resizable(true)
-                .default_width(520.0)
-                .pivot(egui::Align2::CENTER_CENTER)
-                .default_pos(ctx.content_rect().center())
-                .show(ctx, |ui| {
+            let closed = solidcraft_ui_egui::ui_kit::Window::new(egui::Id::new("sc_browser_files"), "folder", "Files in this browser")
+                .cards(3.0)
+                .show_body(ctx, |ui| {
                     ui.horizontal(|ui| {
-                        if ui.button("Open from computer…").clicked() {
+                        if ui_kit::button(ui, "Open from computer…", ui_kit::Button::Normal).clicked() {
                             files::pick_from_disk(&self.files, Intent::Open);
                         }
-                        if ui.button("Insert from computer…").on_hover_text("STEP, 3MF or STL into the open design").clicked() {
+                        if ui_kit::button(ui, "Insert from computer…", ui_kit::Button::Normal)
+                            .on_hover_text("STEP, 3MF or STL into the open design")
+                            .clicked()
+                        {
                             files::pick_from_disk(&self.files, Intent::Insert);
                         }
-                        if ui.button("Download open design").clicked() {
+                        if ui_kit::button(ui, "Download open design", ui_kit::Button::Normal).clicked() {
                             act = Some(("download_open", String::new()));
                         }
                     });
@@ -259,7 +267,7 @@ mod web {
                             for e in &entries {
                                 match &mut self.renaming {
                                     Some((from, to)) if *from == e.name => {
-                                        let r = ui.add(egui::TextEdit::singleline(to).desired_width(200.0));
+                                        let r = ui_kit::cell_editor(ui, ui.make_persistent_id(("stored_file_name", from.as_str())), to, "", false);
                                         if std::mem::take(&mut self.rename_focus) {
                                             r.request_focus();
                                         }
@@ -277,28 +285,31 @@ mod web {
                                 }
                                 ui.label(format!("{:.1} KB", e.size as f64 / 1024.0));
                                 ui.horizontal(|ui| {
-                                    if ui.small_button("Open").clicked() {
+                                    if ui_kit::button(ui, "Open", ui_kit::Button::Small).clicked() {
                                         act = Some(("open", e.name.clone()));
                                     }
                                     let design = solidcraft_engine::io::is_design_path(&e.name);
-                                    if !design && ui.small_button("Insert").on_hover_text("Into the open design (STEP, 3MF, STL)").clicked() {
+                                    if !design
+                                        && ui_kit::button(ui, "Insert", ui_kit::Button::Small)
+                                            .on_hover_text("Into the open design (STEP, 3MF, STL)")
+                                            .clicked()
+                                    {
                                         act = Some(("insert", e.name.clone()));
                                     }
-                                    if ui.small_button("Rename").clicked() {
+                                    if ui_kit::button(ui, "Rename", ui_kit::Button::Small).clicked() {
                                         self.renaming = Some((e.name.clone(), e.name.clone()));
                                         self.rename_focus = true;
                                     }
-                                    if ui
-                                        .small_button("Save to computer…")
+                                    if ui_kit::button(ui, "Save to computer…", ui_kit::Button::Small)
                                         .on_hover_text("A copy in a file you choose; the stored design stays here")
                                         .clicked()
                                     {
                                         act = Some(("save_copy", e.name.clone()));
                                     }
-                                    if ui.small_button("Download").clicked() {
+                                    if ui_kit::button(ui, "Download", ui_kit::Button::Small).clicked() {
                                         act = Some(("download", e.name.clone()));
                                     }
-                                    if ui.small_button("Delete").clicked() {
+                                    if ui_kit::button(ui, "Delete", ui_kit::Button::Small).clicked() {
                                         act = Some(("delete", e.name.clone()));
                                     }
                                 });
@@ -307,7 +318,7 @@ mod web {
                         });
                     });
                 });
-            if !open {
+            if closed {
                 self.files.panel.set(false);
                 self.renaming = None;
             }
@@ -375,20 +386,19 @@ mod web {
         fn recovery_prompt(&mut self, ctx: &egui::Context) {
             let Some((name, path)) = self.files.recovery.borrow().clone() else { return };
             let mut answer = None;
-            egui::Window::new("Recover unsaved work?").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(
-                ctx,
-                |ui| {
+            let _ = solidcraft_ui_egui::ui_kit::Window::new(egui::Id::new("sc_browser_recovery"), "restore", "Recover unsaved work?")
+                .required()
+                .show_body(ctx, |ui| {
                     ui.label(format!("“{name}” had unsaved changes when this page last closed."));
                     ui.horizontal(|ui| {
-                        if ui.button("Recover").clicked() {
+                        if ui_kit::button(ui, "Recover", ui_kit::Button::Normal).clicked() {
                             answer = Some(true);
                         }
-                        if ui.button("Discard").clicked() {
+                        if ui_kit::button(ui, "Discard", ui_kit::Button::Normal).clicked() {
                             answer = Some(false);
                         }
                     });
-                },
-            );
+                });
             let Some(recover) = answer else { return };
             *self.files.recovery.borrow_mut() = None;
             if recover {
@@ -563,6 +573,7 @@ mod web {
                         let files = Rc::new(Files::default());
                         files::start(&files);
                         let (panel, opener, saver, shown) = (files.clone(), files.clone(), files.clone(), files.clone());
+                        let (restorable, restorer) = (files.clone(), files.clone());
                         let services = Services {
                             // Open shows the browser's open dialog for a design where it has one
                             // (the file keeps its handle, so Save writes back to it); otherwise,
@@ -587,6 +598,12 @@ mod web {
                                     SaveTarget::Download => Box::pin(std::future::ready(Some(format!("{}{name}", files::DOWNLOADS)))),
                                 }
                             })),
+                            // A recent design on the disk, from an earlier session, opens by asking
+                            // the browser for its remembered file.
+                            can_restore: Some(Box::new(move |path: &str| {
+                                disk::parse(path).is_some_and(|(id, _)| restorable.disk_known.borrow().contains(id))
+                            })),
+                            restore_file: Some(Box::new(move |path: &str| disk::restore(&restorer, path))),
                             download_design: Some(Box::new(files::download)),
                             browser_files: Some(Box::new(move || shown.panel.set(true))),
                             install_app: Some(crate::install::service(&cc.egui_ctx)),

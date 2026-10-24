@@ -526,6 +526,9 @@ preference_settings! {
     /// The grid turns to the upright origin plane facing a side view (#1470). Off by default: the
     /// grid stays on the ground plane (XY) whatever the view.
     grid_follows_view: bool = false => check("Grid follows the view", "Side views show the grid on the upright plane facing them instead of the ground");
+    /// Draw reference geometry such as inactive sketches and datum planes through shaded bodies.
+    /// Off by default to preserve the depth-tested viewport behaviour.
+    reference_geometry_through_bodies: bool = false, PAGE_GRAPHICS => check_id("settings.reference_geometry_through_bodies");
     /// How finely the viewport tessellates curved faces and edges: `coarse`, `normal`, `fine` or
     /// `ultra` (#1287). Only the display plan the viewport draws; never the design or exports.
     display_quality: String = "normal".into(), PAGE_GRAPHICS;
@@ -586,9 +589,6 @@ preference_settings! {
     look_at_speed: f32 = 1.0, PAGE_NAVIGATION, accept(0.25..=4.0) => enabled_slider(look_at_anim, "Animation speed", 0.5..=3.0, 0.25, |v| format!("{v:.2}×"));
     /// Default modelling orientation: `z` (Z up) or `y` (Y up) (#3).
     up_axis: String = "z".into(), PAGE_DESIGN;
-    /// A STEP or IGES file whose header names a Y-up exporter (SolidWorks) is stood up as it
-    /// opens, with an Undo in the toast (`stand_up`).
-    auto_stand_up: bool = true, PAGE_DESIGN => check("Stand up Y-up files automatically", "A STEP or IGES file from a program that saves Y up opens standing, with Undo in the message");
     /// After a STEP or IGES file opens, offer to stand a Y-up part up (`stand_up`).
     offer_stand_up: bool = true, PAGE_DESIGN => check("Offer to stand up Y-up files", "After a STEP or IGES file opens with Z up, offer a quarter turn about X");
     /// What a middle-button double-click in the view does: `home`, `fit` or `off`.
@@ -742,10 +742,14 @@ impl Snapshot {
     }
     fn restore(self, app: &mut SolveApp) {
         let msaa = app.preferences.msaa;
+        let units_changed = app.preferences.default_units != self.prefs.default_units;
         // Update bookkeeping isn't a setting: a check that finished while the dialog was open stays.
         let update = std::mem::take(&mut app.preferences.update);
         app.preferences = self.prefs;
         app.preferences.update = update;
+        if units_changed {
+            default_units_changed(app);
+        }
         app.ui.dark = self.dark;
         app.ui.layout = self.layout;
         app.ui.show_grid = self.grid;
@@ -914,7 +918,11 @@ fn ui_font_row(app: &mut SolveApp, ui: &mut egui::Ui) {
 /// Restore Defaults for one page.
 fn defaults(app: &mut SolveApp, page: usize) {
     let msaa = app.preferences.msaa;
+    let units = app.preferences.default_units.clone();
     reset_preferences(&mut app.preferences, page);
+    if app.preferences.default_units != units {
+        default_units_changed(app);
+    }
     match page {
         0 => {
             app.autosave_minutes = 5.0;
@@ -1005,6 +1013,13 @@ pub fn apply_new_design(app: &mut SolveApp) {
         }
     }
     apply_new_design_units(app, &app.preferences.default_units.clone());
+}
+
+/// The new-design preference also applies to the blank, unsaved design already open.
+fn default_units_changed(app: &mut SolveApp) {
+    if crate::documents::active_is_blank(app) {
+        apply_new_design(app);
+    }
 }
 
 /// Explicit units for a new-design tile; the user's default preference stays unchanged.
@@ -1262,7 +1277,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
 }
 
 /// Close the dialog; `revert`: put back what was there when it opened (Cancel, Esc, ×).
-fn close(app: &mut SolveApp, revert: bool) {
+pub(crate) fn close(app: &mut SolveApp, revert: bool) {
     if let Some(s) = app.prefs_window.snapshot.take()
         && revert
     {
@@ -1572,12 +1587,16 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
     if new.theme != app.preferences.theme && new.theme != "system" {
         app.ui.dark = file.map_or(new.theme == "dark", |f| f.base.is_dark());
     }
+    let units_changed = new.default_units != app.preferences.default_units;
     let up_changed = new.up_axis != app.preferences.up_axis;
     let msaa_changed = new.msaa != app.preferences.msaa;
     if p.get("layout").is_some() {
         app.ui.layout = new.layout;
     }
     app.preferences = new;
+    if units_changed {
+        default_units_changed(app);
+    }
     if msaa_changed {
         save_graphics(app);
     }
@@ -1605,6 +1624,39 @@ pub(crate) fn reveal_preference(h: &mut crate::scenario::Harness, handle: &str) 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn preferred_units_update_only_a_blank_unsaved_design() {
+        for design in ["new", "saved", "content"] {
+            let mut app = crate::SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+            match design {
+                "saved" => app.session.path = Some("empty.solidcraft".into()),
+                "content" => {
+                    app.session.execute("sketch.create", &serde_json::json!({"plane": "XY"})).unwrap();
+                    app.session.mark_saved();
+                }
+                _ => {}
+            }
+            let dirty = app.session.is_dirty();
+            let undo = app.session.undo.len();
+            super::set(&mut app, &serde_json::json!({"default_units": "in"})).unwrap();
+            assert_eq!(app.preferences.default_units, "in");
+            assert_eq!(app.session.doc.units, if design == "new" { "in" } else { "mm" }, "{design}");
+            assert_eq!(app.session.is_dirty(), dirty, "{design}");
+            assert_eq!(app.session.undo.len(), undo, "{design}");
+            if design == "new" {
+                super::control(&mut app, &serde_json::json!({"open": "Design"})).unwrap();
+                super::set(&mut app, &serde_json::json!({"default_units": "ft"})).unwrap();
+                assert_eq!(app.session.doc.units, "ft");
+                super::control(&mut app, &serde_json::json!({"button": "cancel"})).unwrap();
+                assert_eq!(app.session.doc.units, "in");
+                super::defaults(&mut app, super::PAGE_DESIGN);
+                assert_eq!(app.session.doc.units, "mm");
+                assert!(!app.session.is_dirty());
+                assert!(app.session.undo.is_empty());
+            }
+        }
+    }
+
     #[test]
     fn display_quality_cards_show_increasing_facet_detail() {
         let mut app = super::SolveApp::new(Default::default(), Default::default());

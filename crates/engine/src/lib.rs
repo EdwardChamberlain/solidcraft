@@ -283,6 +283,8 @@ pub struct Session {
     pub sketch_clipboard: Option<cmd::sketch_clipboard::SketchClip>,
     /// Section Analysis: a view cut by a plane (origin, unit normal; the normal side is hidden).
     pub section: Option<(Vec3, Vec3)>,
+    /// Whether the section's cut faces are hatched (`inspect.section`'s `hatch`; on by default).
+    pub section_hatch: bool,
     /// Surface analysis shading the model (zebra, draft, curvature map).
     pub analysis: Option<SurfaceAnalysis>,
     /// The seams `inspect.continuity` last measured, for the viewport to shade. View state: not
@@ -310,6 +312,8 @@ pub struct Session {
     /// Full model evaluations (`refresh`), for tests.
     #[cfg(test)]
     pub(crate) evaluations: usize,
+    /// Resolved associative trace inputs, independent of the document revision and view state.
+    pub(crate) motion_traces: cmd::motion::associative::Cache,
 }
 
 /// A sketch changed by one frame of an interactive gesture (`live: true`).
@@ -435,6 +439,7 @@ impl Session {
             clipboard: Vec::new(),
             sketch_clipboard: None,
             section: None,
+            section_hatch: true,
             analysis: None,
             continuity: Vec::new(),
             checkpoints: Vec::new(),
@@ -446,6 +451,7 @@ impl Session {
             render_jobs: Default::default(),
             #[cfg(test)]
             evaluations: 0,
+            motion_traces: Default::default(),
             crash_journal: false,
         }
     }
@@ -652,8 +658,9 @@ impl Session {
         self.prune_occurrence_state();
         // Joints follow the geometry their origins snap to.
         if !self.doc.assembly.joints.is_empty() {
-            cmd::joints::resolve(self);
+            cmd::joints::place(self);
         }
+        cmd::motion::associative::refresh(self);
         if let Some(id) = self.active_sketch
             && self.doc.feature(id).is_none()
         {
@@ -665,12 +672,13 @@ impl Session {
     /// a body or a feature (or undid or redid such a rename) renames it in the model instead,
     /// which keeps every result and mesh (#3044).
     fn refresh_from(&mut self, previous: &Arc<Document>) {
+        self.follow_plane_renames(previous);
         if let Some((old, new)) = self.body_rename(previous)
             && self.model.rename_body(&self.doc, &old, &new)
         {
             self.revision += 1;
             if !self.doc.assembly.joints.is_empty() {
-                cmd::joints::resolve(self);
+                cmd::joints::place(self);
             }
             return;
         }
@@ -682,6 +690,27 @@ impl Session {
             return;
         }
         self.refresh();
+    }
+
+    /// A hidden construction plane stays hidden when the design renames it, or undo or redo
+    /// gives it another name (#4353): the hidden list keeps planes by name.
+    fn follow_plane_renames(&mut self, previous: &Document) {
+        if self.visibility.hidden_origin.is_empty() {
+            return;
+        }
+        let before: std::collections::HashMap<u64, &str> = previous
+            .features
+            .iter()
+            .filter(|f| matches!(f.kind, solidcraft_doc::FeatureKind::ConstructionPlane { .. }))
+            .map(|f| (f.id, f.name.as_str()))
+            .collect();
+        for f in &self.doc.features {
+            if let Some(old) = before.get(&f.id).filter(|old| **old != f.name) {
+                for n in self.visibility.hidden_origin.iter_mut().filter(|n| *n == old) {
+                    n.clone_from(&f.name);
+                }
+            }
+        }
     }
 
     /// The body rename that turned `previous` into the design (old name, new name), if that is
@@ -758,6 +787,28 @@ impl Session {
     /// as before. Otherwise store each sketch whose values changed as solved, so the next edit
     /// continues from it (see `Model::adopt_solved_sketches`).
     pub(crate) fn settle_value_edit(&mut self, solved_before: &SketchValues) -> Result<()> {
+        // Quantity changes alter topology, so store the regenerated instances in the same
+        // transaction as the parameter edit. Later picks and undo must see those same ids.
+        let mut updated: Vec<_> = self
+            .doc
+            .features
+            .iter()
+            .filter_map(|feature| match &feature.kind {
+                solidcraft_doc::FeatureKind::Sketch { sketch, .. } if sketch.patterns.iter().any(|p| p.count_expression.is_some()) => {
+                    Some((feature.id, sketch.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        if !updated.is_empty() {
+            let (vals, _) = self.doc.param_values();
+            for (_, sketch) in &mut updated {
+                self.doc.apply_pattern_quantities(&vals, sketch)?;
+            }
+        }
+        for (id, sketch) in updated {
+            *self.doc_mut().sketch_mut(id)? = sketch;
+        }
         self.refresh();
         for r in &self.model.results {
             let (Some(before), Some(k)) = (solved_before.get(&r.id), r.state.sketch(r.id)) else { continue };
@@ -968,6 +1019,7 @@ impl Session {
             clipboard: self.clipboard.clone(),
             sketch_clipboard: self.sketch_clipboard.clone(),
             section: None,
+            section_hatch: true,
             analysis: None,
             continuity: Vec::new(),
             checkpoints: Vec::new(),
@@ -979,6 +1031,7 @@ impl Session {
             saved_visibility: self.saved_visibility.clone(),
             #[cfg(test)]
             evaluations: 0,
+            motion_traces: self.motion_traces.clone(),
             crash_journal: false,
         }
     }
@@ -1210,5 +1263,14 @@ pub(crate) type SketchValues = std::collections::BTreeMap<u64, std::collections:
 /// The values of a sketch's driving dimensions that come from parameters: what a value edit
 /// changes in it (as opposed to geometry it projects or links from upstream).
 fn own_values(sk: &solidcraft_sketch::Sketch) -> std::collections::BTreeMap<String, f64> {
-    sk.constraints.iter().filter(|c| c.param.is_some() && !c.driven).filter_map(|c| Some((c.id.clone(), c.kind.value()?))).collect()
+    let mut values: std::collections::BTreeMap<_, _> =
+        sk.constraints.iter().filter(|c| c.param.is_some() && !c.driven).filter_map(|c| Some((c.id.clone(), c.kind.value()?))).collect();
+    for pattern in &sk.patterns {
+        if pattern.count_expression.is_some()
+            && let solidcraft_sketch::SketchPatternKind::Circular { count, .. } = pattern.kind
+        {
+            values.insert(format!("pattern:{}:count", pattern.id), count as f64);
+        }
+    }
+    values
 }

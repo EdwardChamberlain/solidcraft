@@ -104,6 +104,9 @@ pub struct TreeState {
     anchor: Option<String>,
     /// Row keys in drawing order this frame (for Shift ranges).
     order: Vec<String>,
+    /// The previous frame's complete row order: a Shift click resolves its range here, since
+    /// this frame's `order` does not yet hold the rows below the clicked one (#4991).
+    order_prev: Vec<String>,
 }
 
 /// Moving an occurrence: the offsets typed so far (pending until Capture Position).
@@ -478,10 +481,8 @@ fn click_select(app: &mut SolveApp, ui: &egui::Ui, key: String, sel: Option<Sel>
     if mods.shift
         && let Some(a) = app.tree.anchor.clone()
     {
-        let order = app.tree.order.clone();
-        if let (Some(i), Some(j)) = (order.iter().position(|k| *k == a), order.iter().position(|k| *k == key)) {
-            let (lo, hi) = (i.min(j), i.max(j));
-            let items: Vec<Sel> = order[lo..=hi].iter().filter_map(|k| sel_of_key(k)).collect();
+        let items = shift_range(&app.tree.order_prev, &a, &key).or_else(|| shift_range(&app.tree.order, &a, &key));
+        if let Some(items) = items {
             let _ = app.run("select.set", json!({ "items": items, "add": mods.command || mods.ctrl }));
             return;
         }
@@ -500,6 +501,15 @@ fn click_select(app: &mut SolveApp, ui: &egui::Ui, key: String, sel: Option<Sel>
         app.tree.picked_joints.clear();
         let _ = app.run("select.set", json!({ "items": [sel] }));
     }
+}
+
+/// The selectable rows from `anchor` to `key` (either way round) in a row order, or `None`
+/// when the order lacks either of them.
+fn shift_range(order: &[String], anchor: &str, key: &str) -> Option<Vec<Sel>> {
+    let i = order.iter().position(|k| k == anchor)?;
+    let j = order.iter().position(|k| k == key)?;
+    let rows = order.get(i.min(j)..=i.max(j))?;
+    Some(rows.iter().filter_map(|k| sel_of_key(k)).collect())
 }
 
 fn sel_of_key(k: &str) -> Option<Sel> {
@@ -693,7 +703,7 @@ pub(crate) fn resize_column(app: &mut SolveApp, ui: &egui::Ui, rect: Rect, width
 pub fn browser(app: &mut SolveApp, ui: &mut egui::Ui) {
     let available = ui.available_rect_before_wrap();
     let t = Tokens::get();
-    app.tree.order.clear();
+    app.tree.order_prev = std::mem::take(&mut app.tree.order);
     DRAWN.with(|d| d.borrow_mut().clear());
     OCCURRENCES.with(|d| d.borrow_mut().clear());
     let mut acts = Actions::default();
@@ -1170,6 +1180,8 @@ fn occurrence_rows(app: &mut SolveApp, ui: &mut egui::Ui, path: Vec<u64>, depth:
     }
 }
 
+/// The Document Settings group. A second click on an entry closes the window it opened, the way
+/// that window's own × does (#4150).
 fn doc_settings(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
     let key = "docsettings";
     let open = is_open(app, key, false);
@@ -1182,8 +1194,12 @@ fn doc_settings(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
     }
     let units = format!("Units: {}", app.session.doc.units);
     let r = draw_row(ui, ui.id().with("units"), &Row { depth: depth + 1, icon: "settings", label: &units, ..Default::default() });
-    if let Some(p) = r.secondary.or(r.clicked.then(|| r.rect.map(|x| x.left_bottom())).flatten()) {
+    if let Some(p) = r.secondary {
         crate::context_menu::open_for(app, p, Target::Units);
+    } else if r.clicked
+        && let Some(rect) = r.rect
+    {
+        crate::context_menu::toggle_for(app, rect, rect.left_bottom(), Target::Units);
     }
     let prec = format!(
         "Precision: {} {}, {}°",
@@ -1192,16 +1208,28 @@ fn doc_settings(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
         format_args!("{:.*}", usize::from(app.preferences.angle_decimals), 0.0)
     );
     if draw_row(ui, ui.id().with("precision"), &Row { depth: depth + 1, icon: "settings", label: &prec, ..Default::default() }).clicked {
-        app.prefs_window.open = true;
+        if app.prefs_window.open {
+            crate::prefs::close(app, true);
+        } else {
+            app.prefs_window.open = true;
+        }
     }
     let params = format!("Parameters ({})", app.session.doc.params.len());
     if draw_row(ui, ui.id().with("params"), &Row { depth: depth + 1, icon: "params", label: &params, ..Default::default() }).clicked {
-        app.start("parameters.change");
+        if app.params.is_some() {
+            app.params = None;
+        } else {
+            app.start("parameters.change");
+        }
     }
     if draw_row(ui, ui.id().with("design_properties"), &Row { depth: depth + 1, icon: "settings", label: "Design Properties", ..Default::default() })
         .clicked
     {
-        app.start("document.metadata");
+        if app.design_properties.is_some() {
+            app.design_properties = None;
+        } else {
+            app.start("document.metadata");
+        }
     }
 }
 
@@ -1505,7 +1533,7 @@ pub fn set_section_visible(app: &mut SolveApp, visible: bool) {
     if visible {
         if let Some((origin, normal)) = app.tree.hidden_section {
             let plane = json!({"origin": [origin.x, origin.y, origin.z], "normal": [normal.x, normal.y, normal.z]});
-            if app.run("inspect.section", json!({ "plane": plane })).is_ok() {
+            if app.run("inspect.section", json!({"plane": plane, "hatch": app.session.section_hatch})).is_ok() {
                 app.tree.hidden_section = None;
             }
         }
@@ -1641,9 +1669,24 @@ impl CanvasPanel {
     }
 }
 
+/// Does the open dialog's active input take bodies (Combine's target and tools, #4452)? Then a
+/// body clicked in the Browser goes there, as a click on it in the view does, rather than
+/// replacing the selection: overlapping bodies are often only told apart in the Browser.
+fn dialog_takes_body(app: &SolveApp) -> bool {
+    app.dialog.as_ref().and_then(|d| d.active_input()).is_some_and(|i| i.accept & crate::selection::BODIES != 0)
+}
+
 /// A browser click on a plane or axis: it goes to the open dialog's input if that takes it,
 /// otherwise it becomes the selection.
 fn pick_from_browser(app: &mut SolveApp, x: Sel) {
+    if let Sel::Body { .. } = &x
+        && dialog_takes_body(app)
+        && let Some(mut d) = app.dialog.take()
+    {
+        d.pick(&app.session, x);
+        app.dialog = Some(d);
+        return;
+    }
     let hit = match &x {
         Sel::Plane { name } => crate::viewport::Hit::Plane { name: name.clone(), point: solidcraft_engine::geom::Vec3::ZERO },
         Sel::Axis { name } => crate::viewport::Hit::Axis { name: name.clone() },
@@ -2039,6 +2082,8 @@ fn entry_row(
             if let Some(s) = e.sel.clone() {
                 pick_from_browser(app, s);
             }
+        } else if let Some(s) = e.sel.clone().filter(|s| matches!(s, Sel::Body { .. }) && dialog_takes_body(app)) {
+            pick_from_browser(app, s);
         } else {
             click_select(app, ui, e.row_key.clone(), e.sel.clone());
         }

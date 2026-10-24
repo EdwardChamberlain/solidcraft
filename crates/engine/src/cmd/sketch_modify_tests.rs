@@ -239,6 +239,41 @@ fn exact_extend_refuses_ambiguous_stop_without_history_change() {
 }
 
 #[test]
+fn fillet_keeps_expression_corner_when_parameter_changes() {
+    let mut s = new_sketch();
+    run(&mut s, "parameters.add", json!({"name": "W", "expression": "40 mm"}));
+    run(&mut s, "parameters.add", json!({"name": "H", "expression": "20 mm"}));
+    let outline = run(&mut s, "sketch.line", json!({"closed": true, "points": [["0 mm", "0 mm"], ["W", "0 mm"], ["W", "H"], ["0 mm", "H"]]}));
+    assert_eq!(outline["sketch"]["dof"], 0);
+    let fillet = run(&mut s, "sketch.fillet", json!({"point": "l2.end", "radius": 5}));
+    assert_eq!(fillet["sketch"]["dof"], 0, "{fillet}");
+    let corners = ids(&fillet["virtual_corners"]);
+    assert_eq!(corners.len(), 1, "{fillet}");
+
+    for width in [60.0, 30.0] {
+        run(&mut s, "parameters.change", json!({"name": "W", "expression": format!("{width} mm")}));
+        let info = run(&mut s, "sketch.inspect", json!({}));
+        assert_eq!(info["dof"], 0, "{info}");
+        let sk = sketch(&s);
+        let corner = &sk.points[sk.resolve_point(&corners[0]).unwrap()];
+        assert!(corner.fixed && corner.exprs.is_some());
+        for (point, expected) in [
+            (corners[0].as_str(), Vec2::new(width, 20.0)),
+            ("l2.start", Vec2::new(width, 0.0)),
+            ("l2.end", Vec2::new(width, 15.0)),
+            ("l3.start", Vec2::new(width - 5.0, 20.0)),
+            ("l3.end", Vec2::new(0.0, 20.0)),
+        ] {
+            let actual = sk.point(sk.resolve_point(point).unwrap()).unwrap();
+            assert!(actual.dist(expected) < 1e-6, "{point}: {actual:?}, expected {expected:?}");
+        }
+        let area = profiles(&s);
+        assert_eq!(area.len(), 1);
+        assert!(close(area[0], width * 20.0 - 25.0 * (1.0 - std::f64::consts::PI / 4.0)), "{area:?}");
+    }
+}
+
+#[test]
 fn fillet_and_chamfers() {
     let mut s = new_sketch();
     let r = run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [40, 30]}));
@@ -1870,4 +1905,26 @@ fn fillet_refuses_an_offsets_corners_until_its_association_is_broken() {
         assert!(matches!(sk.curves[ai].kind, CurveKind::Arc { .. }), "{arc} is a trimmed arc");
         assert!((sk.radius(ai).unwrap() - 2.0).abs() < 1e-7);
     }
+}
+
+/// #4681: a fillet radius typed as `=name` (a leading equals sign, as in a spreadsheet) is the
+/// expression after the sign, so it can follow a parameter.
+#[test]
+fn fillet_radius_accepts_a_leading_equals_sign() {
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points": [[0, 0], [50, 0], [50, 30], [0, 30]], "closed": true, "ids": ["a", "b", "c", "d"]}));
+    let first = run(&mut s, "sketch.fillet", json!({"point": "a.end", "radius": 4}));
+    let pname = first["param"].as_str().unwrap().to_string();
+    let second = run(&mut s, "sketch.fillet", json!({"point": "b.end", "radius": format!("={pname}")}));
+    let sk = sketch(&s);
+    let arc = ids(&second["curves"])[0].clone();
+    let ai = sk.curve_index(&arc).unwrap();
+    assert!((sk.radius(ai).unwrap() - 4.0).abs() < 1e-7);
+    // Changing the parameter moves both fillets.
+    run(&mut s, "parameters.change", json!({"name": pname, "expression": "6 mm"}));
+    let sk = sketch(&s);
+    let ai = sk.curve_index(&arc).unwrap();
+    assert!((sk.radius(ai).unwrap() - 6.0).abs() < 1e-7);
+    let plain = run(&mut s, "sketch.fillet", json!({"point": "c.end", "radius": "= 2 mm"}));
+    assert!(plain["curves"].is_array());
 }

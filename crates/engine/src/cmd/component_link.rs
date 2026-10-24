@@ -22,6 +22,9 @@ use super::CommandSpec;
 use crate::params::{bad, str_, vec3};
 use crate::{EngineError, Result, Session};
 
+#[path = "component_extract.rs"]
+mod extract;
+
 #[cfg(test)]
 #[path = "component_relink_tests.rs"]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -46,6 +49,19 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("component.break_link", "Break Link", break_link)
         .icon("break")
         .params("component: id or name of a linked component — keeps its bodies as they are and forgets the design file"),
+    CommandSpec::new("component.extract", "Extract to File", extract::extract).icon("export").params(
+        "component: id or name of a component that is not linked; path: the .solidcraft design to write → its history, subcomponents and their joints \
+         move to that design, and the component becomes linked to it (as component.insert_design makes it); returns path, file, feature, bodies, \
+         notices (what stays behind), warnings and copies (components that build the same bodies: see component.replace_with_link)",
+    ),
+    CommandSpec::new("component.copies", "Find Identical Copies", extract::copies).icon("inspect").noundo().params(
+        "component: id or name of a linked component → copies: [{component, name}], the components not linked whose own history builds the same bodies",
+    ),
+    CommandSpec::new("component.replace_with_link", "Replace with Link", extract::replace_with_link).icon("chain").params(
+        "component or components: [ids or names] of components that are not linked; with: a linked component, or path: a .solidcraft design \
+         (its link here, else a new linked component) → each component's history goes and its placements become placements of the linked \
+         component; refused when its bodies are not the same as the link's; returns component, name, replaced and warnings",
+    ),
     CommandSpec::new("component.links", "List Links", list_links)
         .icon("chain")
         .noundo()
@@ -207,18 +223,28 @@ fn linked_bodies(file: &Path, own: Option<&str>) -> Result<(String, String, Opti
     if !part.doc.links.is_empty() {
         let _ = part.execute("component.update_links", &json!({}));
     }
+    // Nothing modelled yet: the part links as an empty component.
+    if !part.world_state().bodies.iter().any(|b| !b.body.is_mesh()) && part.model.results.iter().all(|r| r.error.is_none()) {
+        return Ok((name, id, None));
+    }
+    let (_, feature) = session_bodies(&part, &shown)?;
+    Ok((name, id, Some(feature)))
+}
+
+/// The solid bodies of `part`, the design saved as `shown`, as an Import feature.
+fn session_bodies(part: &Session, shown: &str) -> Result<(String, solidcraft_io::StepFeature)> {
+    let name = part.doc.name.clone();
     if let Some(e) = part.model.results.iter().find_map(|r| r.error.clone()) {
         return Err(EngineError::Other(format!("{shown}: the design has a feature that fails ({e}); fix it before linking it")));
     }
     let world = part.world_state();
     let solids: Vec<String> = world.bodies.iter().filter(|b| !b.body.is_mesh()).map(|b| b.name.clone()).collect();
-    // Nothing modelled yet: the part links as an empty component.
     if solids.is_empty() {
-        return Ok((name, id, None));
+        return Err(EngineError::Other(format!("{shown}: the design has no solid bodies to link")));
     }
     let step = solidcraft_io::export(&part.doc.painted(&world), &solids, solidcraft_io::Format::Step, &name)
         .map_err(|e| EngineError::Other(format!("{shown}: {e}")))?;
-    let mut feature = solidcraft_io::step_import_feature(&step, &shown).map_err(|e| EngineError::Other(format!("{shown}: {e}")))?;
+    let mut feature = solidcraft_io::step_import_feature(&step, shown).map_err(|e| EngineError::Other(format!("{shown}: {e}")))?;
     // The faces keep the names they have in the part, so what refers to one follows the part.
     let carried = carried_face_names(&world, &solids, &feature.import);
     if carried.iter().any(|names| names.iter().any(|n| !n.is_empty()))
@@ -229,7 +255,7 @@ fn linked_bodies(file: &Path, own: Option<&str>) -> Result<(String, String, Opti
     if world.bodies.len() > solids.len() {
         feature.warnings.push(format!("{} mesh bodies of {shown} are not linked", world.bodies.len() - solids.len()));
     }
-    Ok((name, id, Some(feature)))
+    Ok((name, feature))
 }
 
 /// What the faces of the part's solid bodies are called in the part, laid over the faces of the
